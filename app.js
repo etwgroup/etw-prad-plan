@@ -65,19 +65,36 @@ function renderAuth(supabase) {
   state.profile = null;
   app.innerHTML = `
     <section class="auth-screen">
-      <form class="auth-card" id="login-form">
-        <div class="brand-lockup">
-          <div class="brand-mark">ETW</div>
-          <div><strong>PrądPlan</strong><span>KONTRAKTY</span></div>
+      <section class="auth-hero" aria-label="PrądPlan — ETW Group">
+        <div class="auth-hero-inner">
+          <div class="auth-brand-lockup">
+            <div class="auth-etw-mark"><strong>ETW</strong><span>GROUP</span></div>
+            <i></i>
+            <strong class="auth-brand-product">PRĄDPLAN</strong>
+          </div>
+          <p class="auth-kicker">PANEL KONTRAKTÓW</p>
+          <h1>Kontrakty<br />pod kontrolą.</h1>
+          <p class="auth-intro">Prowadź kontrakty elektryczne i teletechniczne. Rozliczenia, faktury oraz koszty firmowe są zawsze w jednym miejscu.</p>
+          <div class="auth-features">
+            <p><b>✓</b> Kontroluj wartość, termin i postęp kontraktów</p>
+            <p><b>✓</b> Przypisuj rozliczenia i faktury do kontraktów</p>
+            <p><b>✓</b> Prowadź koszty firmowe oraz cash flow</p>
+          </div>
+          <p class="auth-footer">ETW Group · wewnętrzny system prowadzenia kontraktów</p>
         </div>
-        <p class="eyebrow">ETW GROUP</p>
-        <h1>Zaloguj się</h1>
-        <p>Użyj konta utworzonego w panelu Supabase. Dostęp do danych kontrolują role i reguły bezpieczeństwa bazy.</p>
-        <label>Adres e-mail<input type="email" name="email" autocomplete="email" required /></label>
-        <label>Hasło<input type="password" name="password" autocomplete="current-password" required /></label>
-        <p class="form-error" id="login-error" hidden></p>
-        <button class="button button-primary" type="submit">Zaloguj</button>
-      </form>
+      </section>
+      <section class="auth-form-area">
+        <form class="auth-card" id="login-form">
+          <p class="eyebrow">BEZPIECZNE LOGOWANIE</p>
+          <h2>Zaloguj się</h2>
+          <p class="auth-form-intro">Użyj firmowego adresu e-mail i hasła ustawionego po otrzymaniu zaproszenia.</p>
+          <label>Adres e-mail<input type="email" name="email" autocomplete="email" required /></label>
+          <label>Hasło<input type="password" name="password" autocomplete="current-password" required /></label>
+          <p class="form-error" id="login-error" hidden></p>
+          <button class="button button-primary" type="submit">Zaloguj się <span aria-hidden="true">→</span></button>
+          <p class="auth-help">Nie masz konta? Poproś właściciela o jego utworzenie.</p>
+        </form>
+      </section>
     </section>`;
 
   const form = document.querySelector("#login-form");
@@ -97,7 +114,7 @@ function renderAuth(supabase) {
       errorBox.textContent = "Nie udało się zalogować: " + error.message;
       errorBox.hidden = false;
       button.disabled = false;
-      button.textContent = "Zaloguj";
+      button.innerHTML = `Zaloguj się <span aria-hidden="true">→</span>`;
     }
   });
 }
