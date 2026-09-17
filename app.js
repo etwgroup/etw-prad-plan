@@ -68,7 +68,7 @@ function renderAuth(supabase) {
       <section class="auth-hero" aria-label="PrądPlan — ETW Group">
         <div class="auth-hero-inner">
           <div class="auth-brand-lockup">
-            <div class="auth-etw-mark"><strong>ETW</strong><span>GROUP</span></div>
+            <img class="auth-etw-logo" src="https://etwgroup.pl/wp-content/uploads/2024/10/ETW-logo.png" alt="ETW Group" width="142" height="85" />
             <i></i>
             <strong class="auth-brand-product">PRĄDPLAN</strong>
           </div>

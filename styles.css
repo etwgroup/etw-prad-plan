@@ -31,32 +31,30 @@ button { cursor: pointer; }
 .loading-screen p:last-child, .setup-screen > p { color: var(--ink-soft); }
 .eyebrow { margin: 0; color: #8c6500; font-size: 12px; font-weight: 800; letter-spacing: .14em; }
 
-.auth-screen { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 100vh; padding: 0; background: var(--white); }
-.auth-hero { position: relative; overflow: hidden; min-height: 100vh; color: var(--white); background: #030303; text-align: left; }
+.auth-screen { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: 100dvh; min-height: 0; overflow: hidden; padding: 0; background: var(--white); }
+.auth-hero { position: relative; overflow: hidden; min-height: 0; color: var(--white); background: #030303; text-align: left; }
 .auth-hero::before, .auth-hero::after { position: absolute; width: 720px; height: 720px; border: 2px solid rgba(255, 213, 0, .2); border-radius: 50%; content: ""; pointer-events: none; }
 .auth-hero::before { top: -430px; right: -285px; }
 .auth-hero::after { bottom: -490px; left: -330px; }
-.auth-hero-inner { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 100vh; max-width: 570px; margin: 0 auto; padding: 76px 72px; }
+.auth-hero-inner { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100%; max-width: 570px; margin: 0 auto; padding: clamp(36px, 6vh, 76px) clamp(46px, 5vw, 72px); }
 .auth-brand-lockup { display: flex; align-items: center; gap: 20px; }
-.auth-etw-mark { display: grid; place-content: center; width: 151px; height: 115px; border: 4px solid var(--white); line-height: .75; text-align: center; }
-.auth-etw-mark strong { font-size: 47px; letter-spacing: -.14em; }
-.auth-etw-mark span { margin-top: 12px; font-size: 19px; font-weight: 800; letter-spacing: .25em; }
+.auth-etw-logo { display: block; width: clamp(142px, 11vw, 192px); height: auto; object-fit: contain; }
 .auth-brand-lockup i { display: block; width: 1px; height: 28px; background: #e1e1e1; }
 .auth-brand-product { font-size: 14px; letter-spacing: .14em; }
-.auth-kicker { margin: 62px 0 20px; color: var(--yellow); font-size: 14px; font-weight: 800; letter-spacing: .13em; }
-.auth-hero h1 { margin: 0; font-size: clamp(48px, 5.1vw, 78px); line-height: .99; letter-spacing: -.075em; }
-.auth-intro { max-width: 530px; margin: 36px 0 0; color: #d2d2d2; font-size: 19px; line-height: 1.55; }
-.auth-features { margin-top: 66px; padding-top: 30px; border-top: 1px solid #353535; }
-.auth-features p { display: flex; align-items: center; gap: 18px; margin: 16px 0; color: #dedede; font-size: 15px; }
+.auth-kicker { margin: clamp(34px, 5.2vh, 62px) 0 17px; color: var(--yellow); font-size: 13px; font-weight: 800; letter-spacing: .13em; }
+.auth-hero h1 { margin: 0; font-size: clamp(46px, 4.5vw, 72px); line-height: .99; letter-spacing: -.075em; }
+.auth-intro { max-width: 530px; margin: clamp(22px, 3vh, 32px) 0 0; color: #d2d2d2; font-size: clamp(15px, 1.15vw, 18px); line-height: 1.48; }
+.auth-features { margin-top: clamp(30px, 5vh, 55px); padding-top: 23px; border-top: 1px solid #353535; }
+.auth-features p { display: flex; align-items: center; gap: 15px; margin: 12px 0; color: #dedede; font-size: clamp(13px, .93vw, 15px); }
 .auth-features b { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; color: var(--black); background: var(--yellow); font-size: 17px; }
-.auth-footer { margin: auto 0 0; padding-top: 45px; color: #969696; font-size: 13px; }
-.auth-form-area { display: grid; place-items: center; min-height: 100vh; padding: 40px; background: var(--white); }
+.auth-footer { margin: auto 0 0; padding-top: 24px; color: #969696; font-size: 12px; }
+.auth-form-area { display: grid; place-items: center; min-height: 0; padding: clamp(28px, 5vw, 58px); background: var(--white); }
 .auth-card { width: min(100%, 568px); color: var(--ink); text-align: left; }
-.auth-card h2 { margin: 25px 0 17px; font-size: 47px; line-height: 1; letter-spacing: -.07em; }
-.auth-form-intro { max-width: 500px; margin: 0 0 46px; color: #777b80; font-size: 17px; line-height: 1.55; }
-.auth-card label { display: grid; gap: 10px; margin: 22px 0; color: #27292c; font-size: 14px; font-weight: 800; }
-.auth-card input { min-height: 59px; border-color: #d5d7d8; background: var(--white); color: var(--ink); }
-.auth-card .button { display: flex; align-items: center; justify-content: center; gap: 11px; width: 100%; min-height: 65px; margin-top: 45px; font-size: 13px; }
+.auth-card h2 { margin: 20px 0 14px; font-size: clamp(38px, 3vw, 47px); line-height: 1; letter-spacing: -.07em; }
+.auth-form-intro { max-width: 500px; margin: 0 0 clamp(27px, 4vh, 42px); color: #777b80; font-size: clamp(15px, 1.1vw, 17px); line-height: 1.5; }
+.auth-card label { display: grid; gap: 8px; margin: clamp(15px, 2vh, 22px) 0; color: #27292c; font-size: 14px; font-weight: 800; }
+.auth-card input { min-height: clamp(48px, 5.6vh, 59px); border-color: #d5d7d8; background: var(--white); color: var(--ink); }
+.auth-card .button { display: flex; align-items: center; justify-content: center; gap: 11px; width: 100%; min-height: clamp(54px, 6.3vh, 65px); margin-top: clamp(25px, 4vh, 45px); font-size: 13px; }
 .auth-card .button span { font-size: 19px; line-height: 0; }
 .auth-help { margin: 32px 0 0; padding-top: 18px; border-top: 1px solid #e6e6e4; color: #a0a2a3; font-size: 13px; }
 .brand-lockup { display: flex; align-items: center; gap: 18px; margin-bottom: 46px; }
@@ -151,12 +149,10 @@ textarea { min-height: 85px; resize: vertical; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .auth-screen { display: block; }
+  .auth-screen { display: block; height: auto; overflow: visible; }
   .auth-hero { min-height: auto; }
   .auth-hero-inner { min-height: auto; padding: 38px 28px; }
-  .auth-etw-mark { width: 92px; height: 70px; border-width: 3px; }
-  .auth-etw-mark strong { font-size: 29px; }
-  .auth-etw-mark span { margin-top: 8px; font-size: 11px; }
+  .auth-etw-logo { width: 116px; }
   .auth-brand-product { font-size: 11px; }
   .auth-kicker { margin-top: 45px; font-size: 11px; }
   .auth-hero h1 { font-size: 48px; }
