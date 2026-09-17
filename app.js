@@ -624,41 +624,33 @@ function formDefinition(mode, record) {
     ].join("")
   };
   if (mode === "cost") return {
-    return {
-      eyebrow: record.id ? "EDYCJA KOSZTU" : "KOSZTY FIRMOWE", title: record.id ? "Edytuj koszt firmowy" : "Dodaj koszt firmowy", fields: [
-        field("Data kosztu", input("cost_date", "date", record.cost_date || today, "required")),
-        field("Kategoria", select("category", options([["paliwo", "Paliwo"], ["najem", "Najem lokalu"], ["narzedzia", "Narzędzia"], ["administracja", "Administracja"], ["inne", "Inne"]], record.category || "paliwo"))),
-        field("Opis", `<textarea name="description" placeholder="Np. najem biura — wrzesień">${escapeHtml(record.description || "")}</textarea>`, "full"),
-        field("Dostawca", input("vendor", "text", record.vendor)),
-        field("Numer dokumentu", input("document_number", "text", record.document_number)),
-        field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
-        field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
-        field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
-      ].join("")
-    };
-  }
+    eyebrow: record.id ? "EDYCJA KOSZTU" : "KOSZTY FIRMOWE", title: record.id ? "Edytuj koszt firmowy" : "Dodaj koszt firmowy", fields: [
+      field("Data kosztu", input("cost_date", "date", record.cost_date || today, "required")),
+      field("Kategoria", select("category", options([["paliwo", "Paliwo"], ["najem", "Najem lokalu"], ["narzedzia", "Narzędzia"], ["administracja", "Administracja"], ["inne", "Inne"]], record.category || "paliwo"))),
+      field("Opis", `<textarea name="description" placeholder="Np. najem biura — wrzesień">${escapeHtml(record.description || "")}</textarea>`, "full"),
+      field("Dostawca", input("vendor", "text", record.vendor)),
+      field("Numer dokumentu", input("document_number", "text", record.document_number)),
+      field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
+      field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
+      field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
+    ].join("")
+  };
   if (mode === "change") return {
-    return {
-      eyebrow: record.id ? "EDYCJA DECYZJI" : "ZMIANA / ROSZCZENIE / RYZYKO", title: record.id ? "Edytuj pozycję" : "Dodaj pozycję", fields: [
-        field("Rodzaj", select("kind", options([["zmiana", "Zmiana"], ["roszczenie", "Roszczenie"], ["ryzyko", "Ryzyko"]], record.kind || "zmiana"))),
-        field("Termin decyzji", input("due_date", "date", record.due_date)),
-        field("Tytuł", input("title", "text", record.title, "required"), "full"),
-        field("Opis", `<textarea name="description" placeholder="Opis wpływu, ustaleń oraz kolejny krok…">${escapeHtml(record.description || "")}</textarea>`, "full"),
-        field("Wpływ netto (zł; minus oznacza koszt / ryzyko)", input("net_amount", "number", record.id ? moneyValue(record.net_amount_cents) : 0, "step=\"0.01\" required")),
-      ].join("")
-    };
-  }
-  if (mode === "document") return {
-    return { eyebrow: "DOKUMENT KONTRAKTU", title: "Dodaj dokument", fields: field("Plik (PDF, JPG, PNG lub XLSX; maks. 10 MB)", `<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />`, "full") };
-  }
-  if (mode === "invite") return {
-    return { eyebrow: "NOWE KONTO", title: "Utwórz konto użytkownika", fields: [
+    eyebrow: record.id ? "EDYCJA DECYZJI" : "ZMIANA / ROSZCZENIE / RYZYKO", title: record.id ? "Edytuj pozycję" : "Dodaj pozycję", fields: [
+      field("Rodzaj", select("kind", options([["zmiana", "Zmiana"], ["roszczenie", "Roszczenie"], ["ryzyko", "Ryzyko"]], record.kind || "zmiana"))),
+      field("Termin decyzji", input("due_date", "date", record.due_date)),
+      field("Tytuł", input("title", "text", record.title, "required"), "full"),
+      field("Opis", `<textarea name="description" placeholder="Opis wpływu, ustaleń oraz kolejny krok…">${escapeHtml(record.description || "")}</textarea>`, "full"),
+      field("Wpływ netto (zł; minus oznacza koszt / ryzyko)", input("net_amount", "number", record.id ? moneyValue(record.net_amount_cents) : 0, "step=\"0.01\" required")),
+    ].join("")
+  };
+  if (mode === "document") return { eyebrow: "DOKUMENT KONTRAKTU", title: "Dodaj dokument", fields: field("Plik (PDF, JPG, PNG lub XLSX; maks. 10 MB)", `<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />`, "full") };
+  if (mode === "invite") return { eyebrow: "NOWE KONTO", title: "Utwórz konto użytkownika", fields: [
       field("Imię i nazwisko", input("full_name", "text", "", "required")),
       field("Firmowy e-mail", input("email", "email", "", "autocomplete=\"off\" required")),
       field("Hasło tymczasowe (min. 10 znaków)", input("password", "password", "", "minlength=\"10\" autocomplete=\"new-password\" required")),
       field("Rola", select("role", options([["manager", "Kierownik kontraktu"], ["accountant", "Księgowość"], ["viewer", "Podgląd"]], "viewer"))),
     ].join("") };
-  }
   return { eyebrow: "UPRAWNIENIA", title: "Zmień konto użytkownika", fields: [
     field("Imię i nazwisko", input("full_name", "text", record.full_name, "required")),
     field("Firmowy e-mail", input("email", "email", record.email, "disabled")),
