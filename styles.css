@@ -78,8 +78,16 @@ html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
 .nav-button:hover { background: #1c1c1c; }
 .nav-button.is-active { color: var(--black); background: var(--yellow); }
 .nav-icon { display: inline-grid; place-items: center; width: 20px; font-size: 17px; }
-.sidebar-footer { margin-top: auto; padding: 18px 12px 2px; border-top: 1px solid #333; color: #a8a8a8; font-size: 12px; line-height: 1.65; }
-.user-email { overflow: hidden; margin-top: 7px; color: #fff; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-footer { margin-top: auto; padding-top: 28px; color: #a8a8a8; }
+.connection-status { display: flex; align-items: center; gap: 10px; margin: 0 10px 24px; color: #a8a8a8; font-size: 11px; font-weight: 600; }
+.connection-status i { width: 9px; height: 9px; background: var(--yellow); }
+.sidebar-account { display: flex; align-items: center; width: 100%; gap: 12px; padding: 15px 12px; border: 0; color: var(--white); background: #1b1b1b; text-align: left; }
+.sidebar-account:hover { background: #262626; }
+.account-avatar { display: grid; flex: 0 0 auto; place-items: center; width: 47px; height: 47px; color: var(--black); background: var(--yellow); font-size: 14px; font-weight: 800; }
+.account-details { display: grid; min-width: 0; gap: 4px; }
+.account-details strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.account-details small { color: #a9a9a9; font-size: 12px; }
+.account-logout { margin-left: auto; color: #bcbcbc; font-size: 22px; line-height: 1; }
 
 .workspace { min-width: 0; }
 .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 83px; padding: 20px 42px; border-bottom: 1px solid var(--line); background: var(--white); }

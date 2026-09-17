@@ -160,9 +160,12 @@ function renderShell(supabase) {
           ${navButton("costs")}
         </nav>
         <div class="sidebar-footer">
-          <div>ETW Group / PrądPlan</div>
-          <div class="user-email">${escapeHtml(state.profile.email || state.user.email || "")}</div>
-          <div>Rola: ${escapeHtml(roleLabel(state.profile.role))}</div>
+          <p class="connection-status"><i></i>Bezpieczne połączenie</p>
+          <button class="sidebar-account" id="logout-button" type="button" title="Wyloguj się">
+            <span class="account-avatar">${escapeHtml(userInitials())}</span>
+            <span class="account-details"><strong>${escapeHtml(userDisplayName())}</strong><small>${escapeHtml(roleLabel(state.profile.role))}</small></span>
+            <span class="account-logout" aria-hidden="true">↪</span>
+          </button>
         </div>
       </aside>
       <section class="workspace">
@@ -170,7 +173,6 @@ function renderShell(supabase) {
           <div class="breadcrumb">ETW Group <span>/</span> <strong id="breadcrumb-view">Przegląd</strong></div>
           <div class="topbar-actions">
             <span class="status"><i class="status-dot"></i>Baza aktywna</span>
-            <button class="logout" id="logout-button" type="button">Wyloguj</button>
           </div>
         </header>
         <div class="content" id="page-content"></div>
@@ -502,6 +504,16 @@ function formPayload(mode, form) {
 
 function canManageContracts() { return ["owner", "manager"].includes(state.profile?.role); }
 function canManageFinance() { return ["owner", "accountant"].includes(state.profile?.role); }
+function userDisplayName() {
+  const profileName = String(state.profile?.full_name || "").trim();
+  if (profileName) return profileName;
+  const localPart = String(state.profile?.email || state.user?.email || "Użytkownik").split("@")[0];
+  return localPart.split(/[._-]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") || "Użytkownik";
+}
+function userInitials() {
+  const words = userDisplayName().split(/\s+/).filter(Boolean);
+  return words.slice(0, 2).map((word) => word.charAt(0)).join("").toUpperCase() || "ET";
+}
 function normalizeSupabaseUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
