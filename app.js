@@ -31,6 +31,7 @@ const state = {
   costs: [],
   changes: [],
   documents: [],
+  schedule: [],
   history: [],
   users: [],
   contractDetail: null,
@@ -311,11 +312,12 @@ async function loadContractDetailData(supabase) {
     .eq("id", contractId)
     .single();
   if (contractError) throw contractError;
-  const [settlements, invoices, changes, documents, history] = await Promise.all([
+  const [settlements, invoices, changes, documents, schedule, history] = await Promise.all([
     selectRowsBy(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category, status, approved_at", "contract_id", contractId, "settlement_date", false),
     selectRowsBy(supabase, "invoices", "id, invoice_type, source, document_number, counterparty, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status", "contract_id", contractId, "issue_date", false),
     selectRowsBy(supabase, "contract_changes", "id, kind, title, description, net_amount_cents, status, due_date, decided_at", "contract_id", contractId, "created_at", false),
     selectRowsBy(supabase, "contract_documents", "id, file_name, storage_path, mime_type, size_bytes, created_at", "contract_id", contractId, "created_at", false),
+    selectRowsBy(supabase, "contract_schedule_items", "id, contract_id, title, start_date, end_date, responsible, progress, status, notes", "contract_id", contractId, "start_date", true),
     loadContractHistory(supabase, contractId),
   ]);
   state.contractDetail = contract;
@@ -323,6 +325,7 @@ async function loadContractDetailData(supabase) {
   state.invoices = invoices;
   state.changes = changes;
   state.documents = documents;
+  state.schedule = schedule;
   state.history = history;
 }
 
@@ -447,9 +450,11 @@ function renderContractDetail() {
   const approvedChanges = sum(state.changes.filter((row) => row.status === "zaakceptowane"), "net_amount_cents");
   const forecastValue = Number(contract.value_cents) + approvedChanges;
   const forecastMargin = forecastValue - Math.max(actualCosts, 0);
+  const scheduleDone = state.schedule.filter((row) => row.status === "zakonczony").length;
+  const scheduleDelayed = state.schedule.filter((row) => row.status === "opozniony").length;
   const editable = canManageContracts();
   return `
-    <div class="page-heading"><div class="heading-copy"><p class="eyebrow">KARTA KONTRAKTU / ${escapeHtml(contract.trade || "KONTRAKT")}</p><h1>${escapeHtml(contract.name)}</h1><p>${escapeHtml(contract.client || "Brak klienta")}${contract.contract_number ? ` · ${escapeHtml(contract.contract_number)}` : ""}</p></div><div class="page-actions"><button class="button button-secondary" type="button" data-view="contracts">← Portfel</button>${editable ? `<button class="button button-secondary" type="button" data-action="edit-contract">Edytuj</button><button class="button button-secondary button-danger" type="button" data-action="delete-contract">Usuń</button>${button("+ Rozliczenie", "settlement")} ${button("+ Zmiana", "change")} ${button("+ Dokument", "document")}` : ""}</div></div>
+    <div class="page-heading"><div class="heading-copy"><p class="eyebrow">KARTA KONTRAKTU / ${escapeHtml(contract.trade || "KONTRAKT")}</p><h1>${escapeHtml(contract.name)}</h1><p>${escapeHtml(contract.client || "Brak klienta")}${contract.contract_number ? ` · ${escapeHtml(contract.contract_number)}` : ""}</p></div><div class="page-actions"><button class="button button-secondary" type="button" data-view="contracts">← Portfel</button>${editable ? `<button class="button button-secondary" type="button" data-action="edit-contract">Edytuj</button><button class="button button-secondary button-danger" type="button" data-action="delete-contract">Usuń</button>${button("+ Zadanie", "schedule")} ${button("+ Rozliczenie", "settlement")} ${button("+ Zmiana", "change")} ${button("+ Dokument", "document")}` : ""}</div></div>
     <section class="metric-grid">
       ${metric("Wartość kontraktu", money(forecastValue), approvedChanges ? `Zmiany: ${money(approvedChanges)}` : "Wartość umowna netto", "yellow")}
       ${metric("Wpisane koszty", money(actualCosts), `${Math.round((actualCosts / Math.max(Number(contract.budget_cents), 1)) * 100)}% budżetu`, actualCosts > Number(contract.budget_cents) ? "red" : "blue")}
@@ -458,6 +463,7 @@ function renderContractDetail() {
     </section>
     <section class="contract-summary panel"><div><p class="eyebrow">STATUS REALIZACJI</p><h2>${statusTag(contract.status)}</h2><p>${escapeHtml(contract.description || "Brak dodatkowego opisu kontraktu.")}</p></div><div class="contract-progress"><strong>${contract.baseline_progress}%</strong><div class="progress"><span style="width:${clampProgress(contract.baseline_progress)}%"></span></div><small>Termin umowny: ${date(contract.due_date)}</small></div></section>
     ${isOwner() ? `<section class="panel contract-history"><div class="panel-head"><div><h2>Historia kontraktu</h2><p>Audyt zmian metadanych kontraktu — dostępny wyłącznie dla właściciela.</p></div></div>${state.history.length ? `<div class="history-list">${state.history.map(historyRow).join("")}</div>` : emptyState("Brak zarejestrowanych zmian kontraktu.")}</section>` : ""}
+    <section class="panel schedule-panel"><div class="panel-head"><div><h2>Harmonogram kontraktu</h2><p>${state.schedule.length ? `${scheduleDone} z ${state.schedule.length} zadań zakończonych${scheduleDelayed ? ` · ${scheduleDelayed} opóźnionych` : ""}` : "Zadania, terminy i odpowiedzialność za realizację."}</p></div>${editable ? button("+ Dodaj zadanie", "schedule") : ""}</div>${state.schedule.length ? `<div class="table-wrap"><table><thead><tr><th>Zadanie</th><th>Termin</th><th>Odpowiedzialny</th><th>Postęp</th><th>Status</th><th></th></tr></thead><tbody>${state.schedule.map(scheduleRow).join("")}</tbody></table></div>` : emptyState("Brak zadań w harmonogramie. Dodaj pierwszy etap realizacji.")}</section>
     <section class="detail-grid">
       <section class="panel"><div class="panel-head"><div><h2>Rozliczenia</h2><p>Pozycje przypisane do tego kontraktu.</p></div></div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Rodzaj</th><th>Opis</th><th>Netto</th><th>Status</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak rozliczeń.")}</section>
       <section class="panel"><div class="panel-head"><div><h2>Faktury kontraktu</h2><p>Zakupowe oraz sprzedażowe przypisane do tego kontraktu.</p></div>${canManageFinance() ? button("+ Faktura", "invoice") : ""}</div>${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Typ</th><th>Netto</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(detailInvoiceRow).join("")}</tbody></table></div>` : emptyState("Brak przypisanych faktur.")}</section>
@@ -538,6 +544,11 @@ function changeRow(row) {
   const controls = canManageContracts() ? `${row.status === "otwarte" ? `<button class="table-action" type="button" data-action="approve-change" data-id="${row.id}">Akceptuj</button><button class="table-action danger" type="button" data-action="reject-change" data-id="${row.id}">Odrzuć</button>` : ""}<button class="table-action" type="button" data-action="edit-change" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-change" data-id="${row.id}">Usuń</button>` : "";
   return `<tr><td>${escapeHtml(changeKindLabel(row.kind))}</td><td><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.description || "—")}</small></td><td class="money">${money(row.net_amount_cents)}</td><td>${date(row.due_date)}</td><td>${statusTag(row.status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
+function scheduleRow(row) {
+  const controls = canManageContracts() ? `<button class="table-action" type="button" data-action="edit-schedule" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-schedule" data-id="${row.id}">Usuń</button>` : "";
+  const term = row.start_date || row.end_date ? `${date(row.start_date)}${row.end_date ? ` — ${date(row.end_date)}` : ""}` : "—";
+  return `<tr><td><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.notes || "—")}</small></td><td>${term}</td><td>${escapeHtml(row.responsible || "—")}</td><td class="schedule-progress"><strong>${clampProgress(row.progress)}%</strong><div class="progress"><span style="width:${clampProgress(row.progress)}%"></span></div></td><td>${statusTag(row.status)}</td><td class="row-actions">${controls}</td></tr>`;
+}
 function documentRow(row) {
   const controls = `<button class="table-action" type="button" data-action="download-document" data-id="${row.id}">Pobierz</button>${canManageContracts() ? `<button class="table-action danger" type="button" data-action="delete-document" data-id="${row.id}">Usuń</button>` : ""}`;
   return `<div class="document-row"><div><strong>${escapeHtml(row.file_name)}</strong><small>${escapeHtml(row.mime_type)} · ${fileSize(row.size_bytes)} · ${dateTime(row.created_at)}</small></div><div class="row-actions">${controls}</div></div>`;
@@ -550,10 +561,10 @@ function userRow(row) {
 }
 
 function openEntryModal(mode, record = null) {
-  if (["contract", "settlement", "change", "document"].includes(mode) && !canManageContracts()) return;
+  if (["contract", "settlement", "change", "document", "schedule"].includes(mode) && !canManageContracts()) return;
   if (["invoice", "cost"].includes(mode) && !canManageFinance()) return;
   if (["invite", "manage-user"].includes(mode) && !isOwner()) return;
-  if (["change", "document"].includes(mode) && !state.contractDetail?.id) return;
+  if (["change", "document", "schedule"].includes(mode) && !state.contractDetail?.id) return;
   state.modalMode = mode;
   state.modalRecord = record;
   formError.hidden = true;
@@ -642,6 +653,17 @@ function formDefinition(mode, record) {
       field("Tytuł", input("title", "text", record.title, "required"), "full"),
       field("Opis", `<textarea name="description" placeholder="Opis wpływu, ustaleń oraz kolejny krok…">${escapeHtml(record.description || "")}</textarea>`, "full"),
       field("Wpływ netto (zł; minus oznacza koszt / ryzyko)", input("net_amount", "number", record.id ? moneyValue(record.net_amount_cents) : 0, "step=\"0.01\" required")),
+    ].join("")
+  };
+  if (mode === "schedule") return {
+    eyebrow: record.id ? "EDYCJA HARMONOGRAMU" : "HARMONOGRAM KONTRAKTU", title: record.id ? "Edytuj zadanie" : "Dodaj zadanie", fields: [
+      field("Nazwa zadania / etapu", input("title", "text", record.title, "required"), "full"),
+      field("Data rozpoczęcia", input("start_date", "date", record.start_date)),
+      field("Termin zakończenia", input("end_date", "date", record.end_date)),
+      field("Odpowiedzialny", input("responsible", "text", record.responsible)),
+      field("Postęp (%)", input("progress", "number", record.id ? record.progress : 0, "min=\"0\" max=\"100\" required")),
+      field("Status", select("status", options([["planowany", "Planowane"], ["w_realizacji", "W realizacji"], ["zakonczony", "Zakończone"], ["opozniony", "Opóźnione"]], record.status || "planowany"))),
+      field("Uwagi", `<textarea name="notes" placeholder="Zależności, materiały, ryzyka lub kolejny krok…">${escapeHtml(record.notes || "")}</textarea>`, "full"),
     ].join("")
   };
   if (mode === "document") return { eyebrow: "DOKUMENT KONTRAKTU", title: "Dodaj dokument", fields: field("Plik (PDF, JPG, PNG lub XLSX; maks. 10 MB)", `<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />`, "full") };
@@ -756,6 +778,12 @@ function formPayload(mode, form) {
   }
   if (mode === "cost") return { table: "company_costs", payload: { cost_date: value("cost_date"), category: value("category"), description: value("description"), vendor: value("vendor"), document_number: value("document_number"), net_amount_cents: number("net_amount"), vat_rate: vat(), payment_status: value("payment_status") } };
   if (mode === "change") return { table: "contract_changes", payload: { contract_id: state.contractDetail.id, kind: value("kind"), title: value("title"), description: value("description"), net_amount_cents: toSignedCents(value("net_amount")), due_date: value("due_date") || null } };
+  if (mode === "schedule") {
+    const startDate = value("start_date") || null;
+    const endDate = value("end_date") || null;
+    if (startDate && endDate && endDate < startDate) throw new Error("Termin zakończenia nie może być wcześniejszy niż data rozpoczęcia.");
+    return { table: "contract_schedule_items", payload: { contract_id: state.contractDetail.id, title: value("title"), start_date: startDate, end_date: endDate, responsible: value("responsible"), progress: Number(value("progress")), status: value("status"), notes: value("notes") } };
+  }
   throw new Error("Nieprawidłowy formularz.");
 }
 
@@ -775,6 +803,7 @@ async function handleAction(element) {
       "edit-invoice": ["invoice", state.invoices],
       "edit-cost": ["cost", state.costs],
       "edit-change": ["change", state.changes],
+      "edit-schedule": ["schedule", state.schedule],
     }[action];
     if (editable) {
       const record = editable[1].find((row) => row.id === id);
@@ -808,6 +837,7 @@ async function handleAction(element) {
       "delete-invoice": ["invoices", "fakturę", canManageFinance()],
       "delete-cost": ["company_costs", "koszt firmowy", canManageFinance()],
       "delete-change": ["contract_changes", "pozycję decyzji", canManageContracts()],
+      "delete-schedule": ["contract_schedule_items", "zadanie harmonogramu", canManageContracts()],
     }[action];
     if (deletion) {
       if (!deletion[2]) throw new Error("Brak uprawnień do usunięcia pozycji.");
@@ -924,5 +954,5 @@ function kindLabel(kind) { return ({ przerob: "Przerób", faktura: "Faktura", ko
 function changeKindLabel(kind) { return ({ zmiana: "Zmiana", roszczenie: "Roszczenie", ryzyko: "Ryzyko" })[kind] || kind || "—"; }
 function auditActionLabel(action) { return ({ insert: "Utworzono", update: "Zmieniono", delete: "Usunięto" })[action] || action || "Zdarzenie"; }
 function roleLabel(role) { return ({ owner: "Właściciel", manager: "Kierownik", accountant: "Księgowość", viewer: "Podgląd" })[role] || "Podgląd"; }
-function statusText(status) { return ({ w_realizacji: "W realizacji", do_decyzji: "Do decyzji", ryzyko: "Ryzyko", zakonczony: "Zakończony", robocze: "Robocze", do_akceptacji: "Do akceptacji", zafakturowane: "Zafakturowane", oplacone: "Opłacone", nowa: "Nowa", do_platnosci: "Do płatności", zaksiegowana: "Zaksięgowana", otwarte: "Otwarte", zaakceptowane: "Zaakceptowane", odrzucone: "Odrzucone", owner: "Właściciel", manager: "Kierownik", accountant: "Księgowość", viewer: "Podgląd" })[status] || String(status || "—"); }
-function statusTag(status) { const tone = ["ryzyko", "do_decyzji", "do_akceptacji", "odrzucone"].includes(status) ? "red" : ["w_realizacji", "oplacone", "zaksiegowana", "zakonczony", "zaakceptowane"].includes(status) ? "green" : "blue"; return `<span class="tag tag-${tone}">${escapeHtml(statusText(status))}</span>`; }
+function statusText(status) { return ({ w_realizacji: "W realizacji", do_decyzji: "Do decyzji", ryzyko: "Ryzyko", zakonczony: "Zakończony", robocze: "Robocze", do_akceptacji: "Do akceptacji", zafakturowane: "Zafakturowane", oplacone: "Opłacone", nowa: "Nowa", do_platnosci: "Do płatności", zaksiegowana: "Zaksięgowana", otwarte: "Otwarte", zaakceptowane: "Zaakceptowane", odrzucone: "Odrzucone", planowany: "Planowane", opozniony: "Opóźnione", owner: "Właściciel", manager: "Kierownik", accountant: "Księgowość", viewer: "Podgląd" })[status] || String(status || "—"); }
+function statusTag(status) { const tone = ["ryzyko", "do_decyzji", "do_akceptacji", "odrzucone", "opozniony"].includes(status) ? "red" : ["w_realizacji", "oplacone", "zaksiegowana", "zakonczony", "zaakceptowane"].includes(status) ? "green" : "blue"; return `<span class="tag tag-${tone}">${escapeHtml(statusText(status))}</span>`; }
