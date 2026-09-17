@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const config = window.ETW_CONFIG || {};
+const supabaseUrl = normalizeSupabaseUrl(config.supabaseUrl);
 const app = document.querySelector("#app");
 const modal = document.querySelector("#entry-modal");
 const modalTitle = document.querySelector("#modal-title");
@@ -30,10 +31,10 @@ const state = {
   shellEventsBound: false,
 };
 
-if (!config.supabaseUrl || !config.supabasePublishableKey) {
+if (!supabaseUrl || !config.supabasePublishableKey) {
   renderSetup();
 } else {
-  const supabase = createClient(config.supabaseUrl, config.supabasePublishableKey);
+  const supabase = createClient(supabaseUrl, config.supabasePublishableKey);
   start(supabase);
 }
 
@@ -43,6 +44,7 @@ function renderSetup() {
       <p class="eyebrow">PRĄDPLAN / KONFIGURACJA</p>
       <h1>Uzupełnij config.js</h1>
       <p>Wpisz adres projektu Supabase oraz jego klucz Publishable (lub anon), a następnie odśwież stronę.</p>
+      <div class="notice">Adres musi mieć postać <strong>https://identyfikator-projektu.supabase.co</strong>. Nie używaj adresu panelu Supabase ani końcówki <strong>/rest/v1</strong>.</div>
       <div class="notice">Nie wklejaj tutaj klucza <strong>service_role</strong>. Ten klucz pozostaje wyłącznie po stronie serwera.</div>
     </section>`;
 }
@@ -438,8 +440,7 @@ function formDefinition(mode) {
 
 entryForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const config = window.ETW_CONFIG;
-  const supabase = createClient(config.supabaseUrl, config.supabasePublishableKey);
+  const supabase = state.supabase;
   const form = new FormData(entryForm);
   const mode = state.modalMode;
   const submit = entryForm.querySelector("button[type=submit]");
@@ -484,6 +485,17 @@ function formPayload(mode, form) {
 
 function canManageContracts() { return ["owner", "manager"].includes(state.profile?.role); }
 function canManageFinance() { return ["owner", "accountant"].includes(state.profile?.role); }
+function normalizeSupabaseUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.hostname === "supabase.com" || url.pathname.startsWith("/dashboard")) return "";
+    return url.origin;
+  } catch {
+    return "";
+  }
+}
 function sum(rows, field) { return rows.reduce((total, row) => total + Number(row[field] || 0), 0); }
 function money(cents) { return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(cents || 0) / 100); }
 function date(value) { return value ? new Intl.DateTimeFormat("pl-PL").format(new Date(`${value}T12:00:00`)) : "—"; }
