@@ -22,6 +22,8 @@ body { min-width: 320px; background: var(--paper); }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
+html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
+
 .loading-screen, .auth-screen, .setup-screen {
   min-height: 100vh;
   display: grid;
@@ -144,6 +146,22 @@ textarea { min-height: 85px; resize: vertical; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 28px; }
 .notice { margin: 20px 0; padding: 16px 18px; border-left: 4px solid var(--yellow); background: #fff8d7; color: #624b00; font-size: 14px; line-height: 1.55; }
 
+/* Ekran logowania musi przykrywać całą przestrzeń widoku, niezależnie od
+   domyślnych marginesów lub reguł dodanych przez hosting/przeglądarkę. */
+html body #app .auth-screen {
+  position: fixed !important;
+  inset: 0 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
 @media (max-width: 1050px) {
   .app-layout { grid-template-columns: 242px minmax(0, 1fr); }
   .sidebar { padding: 22px 14px; }
@@ -151,7 +169,7 @@ textarea { min-height: 85px; resize: vertical; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .auth-screen { position: static; display: block; width: auto; height: auto; overflow: visible; }
+  html body #app .auth-screen { position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; }
   .auth-hero { min-height: auto; }
   .auth-hero-inner { min-height: auto; padding: 38px 28px; }
   .auth-etw-logo { width: 116px; }
