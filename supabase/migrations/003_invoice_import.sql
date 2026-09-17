@@ -26,5 +26,7 @@ alter table public.invoice_import_runs enable row level security;
 create policy "finance reads import runs" on public.invoice_import_runs
   for select to authenticated using (public.can_manage_finance());
 
+grant select on table public.invoice_import_runs to authenticated;
+
 -- Nie dodawaj polityki INSERT/UPDATE. Te operacje wykonuje wyłącznie
 -- zabezpieczona funkcja Edge Function z sekretami KSeF po stronie serwera.

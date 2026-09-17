@@ -183,3 +183,15 @@ create policy "authenticated users read company costs" on public.company_costs
   for select to authenticated using (public.current_app_role() is not null);
 create policy "finance manages company costs" on public.company_costs
   for all to authenticated using (public.can_manage_finance()) with check (public.can_manage_finance());
+
+-- RLS określa dostęp do rekordów, natomiast GRANT dopuszcza samą rolę
+-- authenticated do wykonywania zapytań przez API Supabase.
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on table public.profiles to authenticated;
+grant select, insert, update, delete on table public.contracts to authenticated;
+grant select, insert, update, delete on table public.settlements to authenticated;
+grant select, insert, update, delete on table public.invoices to authenticated;
+grant select, insert, update, delete on table public.company_costs to authenticated;
+grant execute on function public.current_app_role() to authenticated;
+grant execute on function public.can_manage_contracts() to authenticated;
+grant execute on function public.can_manage_finance() to authenticated;

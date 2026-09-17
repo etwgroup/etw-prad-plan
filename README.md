@@ -20,8 +20,13 @@ pradplan-production/
     ├── migrations/
     │   ├── 001_initial_schema.sql     tabele, role i RLS
     │   ├── 002_audit_log.sql          historia zmian
-    │   └── 003_invoice_import.sql     przygotowanie importu KSeF
-    └── functions/import-ksef/         opis etapu późniejszego
+    │   ├── 003_invoice_import.sql     przygotowanie importu KSeF
+    │   ├── 004_authenticated_grants.sql uprawnienia do odczytu i zapisu przez API
+    │   ├── 005_contract_operations.sql karta kontraktu, akceptacje i dokumenty
+    │   └── 006_contract_storage.sql   prywatny magazyn dokumentów
+    └── functions/
+        ├── admin-users/               bezpieczne tworzenie kont przez właściciela
+        └── import-ksef/               bezpieczna bramka do importu KSeF
 ```
 
 ## 1. Utwórz projekt Supabase
@@ -34,6 +39,9 @@ pradplan-production/
    1. `supabase/migrations/001_initial_schema.sql`
    2. `supabase/migrations/002_audit_log.sql`
    3. `supabase/migrations/003_invoice_import.sql`
+   4. `supabase/migrations/004_authenticated_grants.sql`
+   5. `supabase/migrations/005_contract_operations.sql`
+   6. `supabase/migrations/006_contract_storage.sql`
 
 Każdy plik wklej jako osobne zapytanie i wybierz **Run**. Nie uruchamiaj tych
 migracji w istniejącym projekcie z inną strukturą bez wcześniejszej kopii bazy.
@@ -41,6 +49,9 @@ migracji w istniejącym projekcie z inną strukturą bez wcześniejszej kopii ba
 Migracja `001` tworzy: kontrakty, rozliczenia, faktury, koszty firmowe,
 profile, role oraz zasady RLS. RLS wymusza dostęp do danych także wtedy, gdy
 ktoś otworzy narzędzia przeglądarki.
+
+Jeśli widzisz komunikat `permission denied for table profiles`, uruchom
+migrację `004_authenticated_grants.sql`, a następnie odśwież aplikację.
 
 ## 2. Utwórz pierwszego użytkownika i ustaw właściciela
 
@@ -54,8 +65,21 @@ set role = 'owner', active = true
 where email = 'twoj-adres@etwgroup.pl';
 ```
 
-Kolejne konta tworzysz w **Authentication → Users**. Domyślnie mają rolę
-`viewer`. Właściciel może nadać im w SQL Editor jedną z ról:
+Jeżeli konto utworzono przed uruchomieniem migracji `001`, profil mógł nie
+powstać automatycznie. Wtedy zamiast powyższego `UPDATE` uruchom jednorazowo:
+
+```sql
+insert into public.profiles (id, email, full_name, role, active)
+select id, email, coalesce(raw_user_meta_data ->> 'full_name', ''), 'owner', true
+from auth.users
+where email = 'twoj-adres@etwgroup.pl'
+on conflict (id) do update
+set role = 'owner', active = true;
+```
+
+Po wdrożeniu funkcji `admin-users` (opis poniżej) kolejne konta można tworzyć
+bezpośrednio w zakładce **Zespół i uprawnienia**. Do czasu wdrożenia tej funkcji
+utwórz konto w **Authentication → Users**, a następnie nadaj mu rolę w SQL Editor.
 
 | Rola | Uprawnienia |
 | --- | --- |
@@ -88,6 +112,9 @@ window.ETW_CONFIG = {
 Klucz Publishable/anon może być w kodzie strony — jego uprawnienia ogranicza
 RLS. **Nigdy nie wpisuj do `config.js` klucza `service_role`**, hasła do bazy,
 tokenu KSeF ani certyfikatu.
+
+Adres musi być samym adresem projektu, np. `https://abcxyz.supabase.co` — bez
+`/rest/v1`, `/auth/v1` ani adresu panelu `supabase.com/dashboard/...`.
 
 ## 4. Umieść kod w prywatnym GitHubie
 
@@ -146,10 +173,29 @@ Po propagacji certyfikat HTTPS zostanie wystawiony automatycznie. Ustaw
 4. Sprawdź, czy użytkownik `viewer` widzi dane, ale nie widzi przycisków dodawania.
 5. Usuń testowe dane z panelu Supabase, jeśli nie są potrzebne.
 
-## KSeF — świadomie etap drugi
+## 8. Funkcje serwerowe: konta i KSeF
 
-Pakiet przygotowuje rejestr faktur i tabele dla historii importów KSeF, ale **nie
-łączy się jeszcze z KSeF**. Produkcyjne tokeny i certyfikaty nie mogą trafić do
-przeglądarki, `config.js` ani repozytorium. Integrację dodaje się później jako
-Supabase Edge Function, która trzyma sekrety po stronie serwera i zapisuje
-wyniki w `invoice_import_runs` oraz `invoices`.
+Funkcje w `supabase/functions/` nie są publikowane przez Vercel — wdraża się je
+do tego samego projektu Supabase. W katalogu zawierającym folder `supabase/`
+zaloguj się do Supabase CLI, połącz projekt i uruchom:
+
+```bash
+supabase login
+supabase link --project-ref TWOJ_PROJECT_REF
+supabase functions deploy admin-users
+supabase functions deploy import-ksef
+```
+
+Po udanym wdrożeniu właściciel może tworzyć konta z aplikacji. Funkcja sama
+sprawdza sesję i rolę właściciela; klucz `service_role` pozostaje po stronie
+Supabase.
+
+## KSeF — bezpieczny etap integracyjny
+
+Przycisk **Sprawdź połączenie** uruchamia funkcję `import-ksef`, która zapisuje
+historię próby importu po stronie serwera. Nie zapisuj tokenu ani certyfikatu
+KSeF w `config.js`, GitHubie lub Vercel. Po uzyskaniu właściwego dostępu KSeF
+ustaw w Supabase Secrets `KSEF_API_URL` i `KSEF_ACCESS_TOKEN` (lub wdrożony
+mechanizm certyfikatu), a następnie dodaj adapter aktualnej wersji API do
+`supabase/functions/import-ksef/index.ts`. Dopiero adapter pobiera i mapuje
+faktury oraz chroni przed duplikacją po numerze KSeF.

@@ -52,3 +52,5 @@ alter table public.audit_log enable row level security;
 
 create policy "owners read audit log" on public.audit_log
   for select to authenticated using (public.current_app_role() = 'owner');
+
+grant select on table public.audit_log to authenticated;

@@ -1,9 +1,12 @@
-# Import KSeF — etap 2
+# Import KSeF
 
-Ten katalog jest celowo pusty w pierwszym wdrożeniu. Aplikacja oraz baza są
-gotowe na import KSeF, ale połączenie z produkcyjnym KSeF wymaga osobnego,
-bezpiecznego wdrożenia Edge Function i sekretów po stronie Supabase.
+`index.ts` jest serwerową bramką uruchamianą z zakładki **Faktury**. Weryfikuje
+sesję oraz rolę `owner`/`accountant`, zapisuje próbę importu do
+`invoice_import_runs` i sprawdza, czy tajne dane połączenia są skonfigurowane.
 
 Nie umieszczaj tokenu, certyfikatu ani klucza KSeF w `config.js`, GitHubie lub
-kodzie przeglądarkowym. Import należy uruchamiać wyłącznie z Edge Function
-z kluczem `service_role` zapisanym jako sekret środowiska.
+kodzie przeglądarkowym. Ustaw je wyłącznie jako Supabase Edge Function Secrets.
+
+Przed użyciem produkcyjnym należy uzupełnić adapter aktualnej wersji API KSeF w
+`index.ts`, obejmujący autoryzację, pobranie faktur, walidację pól oraz
+deduplikację po `ksef_number`. Najpierw wykonaj test w środowisku testowym KSeF.

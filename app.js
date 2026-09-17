@@ -16,6 +16,9 @@ const viewMeta = {
   settlements: { label: "Rozliczenia", icon: "▤" },
   invoices: { label: "Faktury", icon: "▧" },
   costs: { label: "Koszty firmowe", icon: "▱" },
+  reports: { label: "Raporty", icon: "▥" },
+  users: { label: "Zespół i uprawnienia", icon: "◉" },
+  contractDetail: { label: "Karta kontraktu", icon: "▦" },
 };
 
 const state = {
@@ -26,7 +29,13 @@ const state = {
   settlements: [],
   invoices: [],
   costs: [],
+  changes: [],
+  documents: [],
+  history: [],
+  users: [],
+  contractDetail: null,
   modalMode: null,
+  modalRecord: null,
   supabase: null,
   shellEventsBound: false,
 };
@@ -159,6 +168,11 @@ function renderShell(supabase) {
           ${navButton("invoices")}
           ${navButton("costs")}
         </nav>
+        <p class="nav-label">ANALIZY</p>
+        <nav class="nav" aria-label="Raporty">
+          ${navButton("reports")}
+        </nav>
+        ${isOwner() ? `<p class="nav-label">ADMINISTRACJA</p><nav class="nav" aria-label="Administracja">${navButton("users")}</nav>` : ""}
         <div class="sidebar-footer">
           <p class="connection-status"><i></i>Bezpieczne połączenie</p>
           <button class="sidebar-account" id="logout-button" type="button" title="Wyloguj się">
@@ -190,6 +204,16 @@ function renderShell(supabase) {
       }
       const add = event.target.closest("[data-add]");
       if (add) openEntryModal(add.dataset.add);
+      const contract = event.target.closest("[data-contract-id]");
+      if (contract) {
+        state.contractDetail = { id: contract.dataset.contractId };
+        state.activeView = "contractDetail";
+        renderShell(state.supabase);
+        await loadView(state.supabase);
+        return;
+      }
+      const action = event.target.closest("[data-action]");
+      if (action) await handleAction(action);
       if (event.target.closest("#logout-button")) await state.supabase.auth.signOut();
     });
     state.shellEventsBound = true;
@@ -214,7 +238,7 @@ async function loadView(supabase) {
       page.innerHTML = renderDashboard();
     }
     if (state.activeView === "contracts") {
-      state.contracts = await selectRows(supabase, "contracts", "id, name, client, trade, value_cents, budget_cents, baseline_progress, due_date, status", "created_at", false);
+      state.contracts = await selectRows(supabase, "contracts", "id, name, client, trade, contract_number, description, value_cents, budget_cents, baseline_progress, due_date, status", "created_at", false);
       page.innerHTML = renderContracts();
     }
     if (state.activeView === "settlements") {
@@ -229,6 +253,19 @@ async function loadView(supabase) {
       state.costs = await selectRows(supabase, "company_costs", "id, cost_date, category, description, vendor, document_number, net_amount_cents, vat_rate, payment_status", "cost_date", false);
       page.innerHTML = renderCosts();
     }
+    if (state.activeView === "contractDetail") {
+      await loadContractDetailData(supabase);
+      page.innerHTML = renderContractDetail();
+    }
+    if (state.activeView === "reports") {
+      await loadDashboardData(supabase);
+      page.innerHTML = renderReports();
+    }
+    if (state.activeView === "users") {
+      if (!isOwner()) throw new Error("Brak uprawnień do zarządzania zespołem.");
+      state.users = await selectRows(supabase, "profiles", "id, email, full_name, role, active, created_at", "created_at", false);
+      page.innerHTML = renderUsers();
+    }
   } catch (error) {
     page.innerHTML = `<section class="panel"><div class="empty">Nie udało się pobrać danych: ${escapeHtml(error.message || "nieznany błąd")}</div></section>`;
   }
@@ -236,7 +273,7 @@ async function loadView(supabase) {
 
 async function loadDashboardData(supabase) {
   const [contracts, settlements, invoices, costs] = await Promise.all([
-    selectRows(supabase, "contracts", "id, name, value_cents, baseline_progress, status", "created_at", false),
+    selectRows(supabase, "contracts", "id, name, client, trade, contract_number, value_cents, budget_cents, baseline_progress, due_date, status", "created_at", false),
     selectRows(supabase, "settlements", "id, kind, net_amount_cents", "settlement_date", false),
     selectRows(supabase, "invoices", "id, invoice_type, net_amount_cents, allocation", "issue_date", false),
     selectRows(supabase, "company_costs", "id, net_amount_cents", "cost_date", false),
@@ -265,8 +302,51 @@ async function loadInvoiceData(supabase) {
   state.invoices = invoices;
 }
 
+async function loadContractDetailData(supabase) {
+  const contractId = state.contractDetail?.id;
+  if (!contractId) throw new Error("Nie wybrano kontraktu.");
+  const { data: contract, error: contractError } = await supabase
+    .from("contracts")
+    .select("id, name, client, trade, contract_number, description, value_cents, budget_cents, baseline_progress, due_date, status, manager_id")
+    .eq("id", contractId)
+    .single();
+  if (contractError) throw contractError;
+  const [settlements, invoices, changes, documents, history] = await Promise.all([
+    selectRowsBy(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category, status, approved_at", "contract_id", contractId, "settlement_date", false),
+    selectRowsBy(supabase, "invoices", "id, invoice_type, source, document_number, counterparty, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status", "contract_id", contractId, "issue_date", false),
+    selectRowsBy(supabase, "contract_changes", "id, kind, title, description, net_amount_cents, status, due_date, decided_at", "contract_id", contractId, "created_at", false),
+    selectRowsBy(supabase, "contract_documents", "id, file_name, storage_path, mime_type, size_bytes, created_at", "contract_id", contractId, "created_at", false),
+    loadContractHistory(supabase, contractId),
+  ]);
+  state.contractDetail = contract;
+  state.settlements = settlements;
+  state.invoices = invoices;
+  state.changes = changes;
+  state.documents = documents;
+  state.history = history;
+}
+
 async function selectRows(supabase, table, columns, orderColumn, ascending) {
   const { data, error } = await supabase.from(table).select(columns).order(orderColumn, { ascending });
+  if (error) throw error;
+  return data || [];
+}
+
+async function selectRowsBy(supabase, table, columns, filterColumn, filterValue, orderColumn, ascending) {
+  const { data, error } = await supabase.from(table).select(columns).eq(filterColumn, filterValue).order(orderColumn, { ascending });
+  if (error) throw error;
+  return data || [];
+}
+
+async function loadContractHistory(supabase, contractId) {
+  if (!isOwner()) return [];
+  const { data, error } = await supabase
+    .from("audit_log")
+    .select("id, action, created_at")
+    .eq("entity", "contracts")
+    .eq("entity_id", contractId)
+    .order("created_at", { ascending: false })
+    .limit(12);
   if (error) throw error;
   return data || [];
 }
@@ -286,7 +366,7 @@ function renderDashboard() {
     </section>
     <section class="panel">
       <div class="panel-head"><div><h2>Stan portfela</h2><p>Najważniejsze kontrakty i stopień zaawansowania robót.</p></div><button class="button button-secondary" type="button" data-view="contracts">Zobacz kontrakty</button></div>
-      ${state.contracts.length ? `<div class="table-wrap"><table><thead><tr><th>Kontrakt</th><th>Wartość netto</th><th>Zaawansowanie</th><th>Status</th></tr></thead><tbody>${state.contracts.slice(0, 6).map(contractRow).join("")}</tbody></table></div>` : emptyState("Brak kontraktów. Dodaj pierwszy kontrakt w zakładce „Portfel kontraktów”.")}
+      ${state.contracts.length ? `<div class="table-wrap"><table><thead><tr><th>Kontrakt</th><th>Branża</th><th>Wartość netto</th><th>Zaawansowanie</th><th>Termin</th><th>Status</th></tr></thead><tbody>${state.contracts.slice(0, 6).map(contractRow).join("")}</tbody></table></div>` : emptyState("Brak kontraktów. Dodaj pierwszy kontrakt w zakładce „Portfel kontraktów”.")}
     </section>`;
 }
 
@@ -302,7 +382,7 @@ function renderContracts() {
     </section>
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr kontraktów</h2><p>Dane kontraktowe dostępne dla wszystkich uprawnionych użytkowników.</p></div></div>
-      ${state.contracts.length ? `<div class="table-wrap"><table><thead><tr><th>Kontrakt</th><th>Branża</th><th>Wartość netto</th><th>Postęp</th><th>Termin</th><th>Status</th></tr></thead><tbody>${state.contracts.map(contractRow).join("")}</tbody></table></div>` : emptyState("Nie ma jeszcze kontraktów.")}
+      ${state.contracts.length ? `<div class="table-wrap"><table><thead><tr><th>Kontrakt</th><th>Branża</th><th>Wartość netto</th><th>Postęp</th><th>Termin</th><th>Status</th><th></th></tr></thead><tbody>${state.contracts.map(contractListRow).join("")}</tbody></table></div>` : emptyState("Nie ma jeszcze kontraktów.")}
     </section>`;
 }
 
@@ -333,10 +413,10 @@ function renderInvoices() {
       ${metric("Sprzedażowe", money(sum(state.invoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "green")}
       ${metric("Do przypisania", money(sum(unassigned, "net_amount_cents")), `${unassigned.length} pozycji`, "yellow")}
     </section>
-    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Import KSeF jest przygotowany</h2><p>Struktura bazy i rejestr importów są gotowe. Bezpieczne połączenie KSeF wymaga później osobnej Edge Function po stronie Supabase.</p></div></section>
+    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Import KSeF jest przygotowany</h2><p>Import uruchamia bezpieczną funkcję serwerową. Do faktycznego pobrania dokumentów potrzebna jest jeszcze konfiguracja firmowego dostępu KSeF w Supabase.</p></div>${canAdd ? `<button class="button button-secondary" type="button" data-action="import-ksef">Sprawdź połączenie</button>` : ""}</section>
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr faktur</h2><p>Dodaj ręcznie fakturę lub przypisz zaimportowaną pozycję do kontraktu.</p></div></div>
-      ${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th></tr></thead><tbody>${state.invoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState("Brak faktur w rejestrze.")}
+      ${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState("Brak faktur w rejestrze.")}
     </section>`;
 }
 
@@ -352,8 +432,69 @@ function renderCosts() {
     </section>
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr kosztów firmowych</h2><p>Pozycje nie są doliczane do budżetu pojedynczego kontraktu.</p></div></div>
-      ${state.costs.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Kwota netto</th><th>Status</th></tr></thead><tbody>${state.costs.map(costRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów firmowych.")}
+      ${state.costs.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${state.costs.map(costRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów firmowych.")}
     </section>`;
+}
+
+function renderContractDetail() {
+  const contract = state.contractDetail;
+  const settlementRevenue = sum(state.settlements.filter((row) => ["przerob", "faktura"].includes(row.kind)), "net_amount_cents");
+  const invoiceRevenue = sum(state.invoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents");
+  const settlementCosts = sum(state.settlements.filter((row) => row.kind === "koszt"), "net_amount_cents");
+  const invoiceCosts = sum(state.invoices.filter((row) => row.invoice_type === "purchase"), "net_amount_cents");
+  const revenue = settlementRevenue + invoiceRevenue;
+  const actualCosts = settlementCosts + invoiceCosts;
+  const approvedChanges = sum(state.changes.filter((row) => row.status === "zaakceptowane"), "net_amount_cents");
+  const forecastValue = Number(contract.value_cents) + approvedChanges;
+  const forecastMargin = forecastValue - Math.max(actualCosts, 0);
+  const editable = canManageContracts();
+  return `
+    <div class="page-heading"><div class="heading-copy"><p class="eyebrow">KARTA KONTRAKTU / ${escapeHtml(contract.trade || "KONTRAKT")}</p><h1>${escapeHtml(contract.name)}</h1><p>${escapeHtml(contract.client || "Brak klienta")}${contract.contract_number ? ` · ${escapeHtml(contract.contract_number)}` : ""}</p></div><div class="page-actions"><button class="button button-secondary" type="button" data-view="contracts">← Portfel</button>${editable ? `<button class="button button-secondary" type="button" data-action="edit-contract">Edytuj</button><button class="button button-secondary button-danger" type="button" data-action="delete-contract">Usuń</button>${button("+ Rozliczenie", "settlement")} ${button("+ Zmiana", "change")} ${button("+ Dokument", "document")}` : ""}</div></div>
+    <section class="metric-grid">
+      ${metric("Wartość kontraktu", money(forecastValue), approvedChanges ? `Zmiany: ${money(approvedChanges)}` : "Wartość umowna netto", "yellow")}
+      ${metric("Wpisane koszty", money(actualCosts), `${Math.round((actualCosts / Math.max(Number(contract.budget_cents), 1)) * 100)}% budżetu`, actualCosts > Number(contract.budget_cents) ? "red" : "blue")}
+      ${metric("Przychody / przerób", money(revenue), "Pozycje w rejestrze", "green")}
+      ${metric("Marża prognozowana", money(forecastMargin), forecastMargin < 0 ? "Wymaga decyzji" : "Po kosztach wpisanych", forecastMargin < 0 ? "red" : "green")}
+    </section>
+    <section class="contract-summary panel"><div><p class="eyebrow">STATUS REALIZACJI</p><h2>${statusTag(contract.status)}</h2><p>${escapeHtml(contract.description || "Brak dodatkowego opisu kontraktu.")}</p></div><div class="contract-progress"><strong>${contract.baseline_progress}%</strong><div class="progress"><span style="width:${clampProgress(contract.baseline_progress)}%"></span></div><small>Termin umowny: ${date(contract.due_date)}</small></div></section>
+    ${isOwner() ? `<section class="panel contract-history"><div class="panel-head"><div><h2>Historia kontraktu</h2><p>Audyt zmian metadanych kontraktu — dostępny wyłącznie dla właściciela.</p></div></div>${state.history.length ? `<div class="history-list">${state.history.map(historyRow).join("")}</div>` : emptyState("Brak zarejestrowanych zmian kontraktu.")}</section>` : ""}
+    <section class="detail-grid">
+      <section class="panel"><div class="panel-head"><div><h2>Rozliczenia</h2><p>Pozycje przypisane do tego kontraktu.</p></div></div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Rodzaj</th><th>Opis</th><th>Netto</th><th>Status</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak rozliczeń.")}</section>
+      <section class="panel"><div class="panel-head"><div><h2>Faktury kontraktu</h2><p>Zakupowe oraz sprzedażowe przypisane do tego kontraktu.</p></div>${canManageFinance() ? button("+ Faktura", "invoice") : ""}</div>${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Typ</th><th>Netto</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(detailInvoiceRow).join("")}</tbody></table></div>` : emptyState("Brak przypisanych faktur.")}</section>
+    </section>
+    <section class="detail-grid">
+      <section class="panel"><div class="panel-head"><div><h2>Zmiany, roszczenia i ryzyka</h2><p>Rejestr decyzji wpływających na kontrakt.</p></div>${editable ? button("+ Dodaj pozycję", "change") : ""}</div>${state.changes.length ? `<div class="table-wrap"><table><thead><tr><th>Rodzaj</th><th>Pozycja</th><th>Wpływ netto</th><th>Termin</th><th>Status</th><th></th></tr></thead><tbody>${state.changes.map(changeRow).join("")}</tbody></table></div>` : emptyState("Brak zmian i roszczeń.")}</section>
+      <section class="panel"><div class="panel-head"><div><h2>Dokumenty kontraktu</h2><p>Umowy, protokoły, kosztorysy oraz ustalenia.</p></div>${editable ? button("+ Dodaj dokument", "document") : ""}</div>${state.documents.length ? `<div class="document-list">${state.documents.map(documentRow).join("")}</div>` : emptyState("Brak dokumentów.")}</section>
+    </section>`;
+}
+
+function renderReports() {
+  const contractValue = sum(state.contracts, "value_cents");
+  const purchaseInvoices = sum(state.invoices.filter((row) => row.invoice_type === "purchase"), "net_amount_cents");
+  const salesInvoices = sum(state.invoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents");
+  const operatingCosts = sum(state.costs, "net_amount_cents");
+  const forecast = contractValue - purchaseInvoices - operatingCosts;
+  return `
+    ${heading("ETW GROUP / ANALIZY", "Raport finansowy", "Zestawienie portfela, faktur i kosztów firmy do bieżącej kontroli marży.", `<button class="button button-secondary" type="button" data-action="print-report">Drukuj / PDF</button><button class="button button-primary" type="button" data-action="export-report">Excel (CSV)</button>`)}
+    <section class="metric-grid">
+      ${metric("Portfel kontraktów", money(contractValue), `${state.contracts.length} kontraktów`, "yellow")}
+      ${metric("Faktury sprzedażowe", money(salesInvoices), "Przychody z FV", "green")}
+      ${metric("Faktury zakupowe", money(purchaseInvoices), "Koszty kontraktowe", "red")}
+      ${metric("Prognoza po kosztach", money(forecast), "Portfel − koszty", forecast < 0 ? "red" : "green")}
+    </section>
+    <section class="panel report-table"><div class="panel-head"><div><h2>Rentowność kontraktów</h2><p>Kwoty netto; raport uwzględnia pozycje zarejestrowane w PrądPlan.</p></div></div><div class="table-wrap"><table><thead><tr><th>Kontrakt</th><th>Wartość</th><th>Budżet</th><th>Postęp</th><th>Status</th></tr></thead><tbody>${state.contracts.map(reportContractRow).join("")}</tbody></table></div></section>`;
+}
+
+function renderUsers() {
+  return `
+    ${heading("ETW GROUP / ADMINISTRACJA", "Zespół i uprawnienia", "Twórz konta firmowe, aktywuj użytkowników i przypisuj role w PrądPlan.", button("+ Utwórz konto", "invite"))}
+    <section class="metric-grid">
+      ${metric("Wszystkie konta", String(state.users.length), "Zarejestrowani użytkownicy", "yellow")}
+      ${metric("Aktywne", String(state.users.filter((row) => row.active).length), "Mają dostęp", "green")}
+      ${metric("Oczekujące", String(state.users.filter((row) => !row.active).length), "Wymagają aktywacji", "red")}
+      ${metric("Kierownicy / księgowość", String(state.users.filter((row) => ["manager", "accountant"].includes(row.role)).length), "Role operacyjne", "blue")}
+    </section>
+    <section class="panel"><div class="panel-head"><div><h2>Konta użytkowników</h2><p>Właściciel zarządza rolami i aktywnością kont.</p></div></div><div class="table-wrap"><table><thead><tr><th>Użytkownik</th><th>Rola</th><th>Dostęp</th><th>Utworzono</th><th></th></tr></thead><tbody>${state.users.map(userRow).join("")}</tbody></table></div></section>`;
 }
 
 function heading(eyebrow, title, description, actions = "") {
@@ -365,96 +506,165 @@ function metric(label, value, tagText, tone) { return `<article class="metric"><
 function emptyState(text) { return `<div class="empty">${text}</div>`; }
 
 function contractRow(row) {
-  return `<tr><td><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.client || "—")}</small></td><td>${escapeHtml(row.trade || "—")}</td><td class="money">${money(row.value_cents)}</td><td class="contract-progress"><strong>${row.baseline_progress}%</strong><div class="progress"><span style="width:${clampProgress(row.baseline_progress)}%"></span></div></td><td>${date(row.due_date)}</td><td>${statusTag(row.status)}</td></tr>`;
+  return `<tr><td><button class="table-link" type="button" data-contract-id="${row.id}">${escapeHtml(row.name)}</button><small>${escapeHtml(row.client || "—")}</small></td><td>${escapeHtml(row.trade || "—")}</td><td class="money">${money(row.value_cents)}</td><td class="contract-progress"><strong>${row.baseline_progress}%</strong><div class="progress"><span style="width:${clampProgress(row.baseline_progress)}%"></span></div></td><td>${date(row.due_date)}</td><td>${statusTag(row.status)}</td></tr>`;
+}
+function contractListRow(row) {
+  return `${contractRow(row).replace("</tr>", `<td><button class="table-action" type="button" data-contract-id="${row.id}">Otwórz</button></td></tr>`)}`;
+}
+function reportContractRow(row) {
+  return `<tr><td><button class="table-link" type="button" data-contract-id="${row.id}">${escapeHtml(row.name)}</button><small>${escapeHtml(row.client || "—")}</small></td><td class="money">${money(row.value_cents)}</td><td class="money">${money(row.budget_cents)}</td><td>${row.baseline_progress}%</td><td>${statusTag(row.status)}</td></tr>`;
 }
 function settlementRow(row) {
   return `<tr><td>${date(row.settlement_date)}<small>okres: ${date(row.period)}</small></td><td><strong>${escapeHtml(relationName(row.contracts))}</strong></td><td>${escapeHtml(kindLabel(row.kind))}</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.status)}</td></tr>`;
 }
 function invoiceRow(row) {
   const assignment = row.allocation === "contract" ? relationName(row.contracts) : row.allocation === "company" ? row.company_category : "Nieprzypisana";
-  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td></tr>`;
+  const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
+  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function costRow(row) {
-  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(row.category)}</td><td><strong>${escapeHtml(row.description || "—")}</strong></td><td>${escapeHtml(row.vendor || "—")}</td><td>${escapeHtml(row.document_number || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td></tr>`;
+  const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-cost" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-cost" data-id="${row.id}">Usuń</button>` : "";
+  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(row.category)}</td><td><strong>${escapeHtml(row.description || "—")}</strong></td><td>${escapeHtml(row.vendor || "—")}</td><td>${escapeHtml(row.document_number || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+}
+function detailSettlementRow(row) {
+  const controls = canManageContracts() ? `${row.status === "do_akceptacji" ? `<button class="table-action" type="button" data-action="approve-settlement" data-id="${row.id}">Akceptuj</button>` : ""}<button class="table-action" type="button" data-action="edit-settlement" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-settlement" data-id="${row.id}">Usuń</button>` : "";
+  return `<tr><td>${date(row.settlement_date)}</td><td>${escapeHtml(kindLabel(row.kind))}</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.status)}</td><td class="row-actions">${controls}</td></tr>`;
+}
+function detailInvoiceRow(row) {
+  const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
+  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+}
+function changeRow(row) {
+  const controls = canManageContracts() ? `${row.status === "otwarte" ? `<button class="table-action" type="button" data-action="approve-change" data-id="${row.id}">Akceptuj</button><button class="table-action danger" type="button" data-action="reject-change" data-id="${row.id}">Odrzuć</button>` : ""}<button class="table-action" type="button" data-action="edit-change" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-change" data-id="${row.id}">Usuń</button>` : "";
+  return `<tr><td>${escapeHtml(changeKindLabel(row.kind))}</td><td><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.description || "—")}</small></td><td class="money">${money(row.net_amount_cents)}</td><td>${date(row.due_date)}</td><td>${statusTag(row.status)}</td><td class="row-actions">${controls}</td></tr>`;
+}
+function documentRow(row) {
+  const controls = `<button class="table-action" type="button" data-action="download-document" data-id="${row.id}">Pobierz</button>${canManageContracts() ? `<button class="table-action danger" type="button" data-action="delete-document" data-id="${row.id}">Usuń</button>` : ""}`;
+  return `<div class="document-row"><div><strong>${escapeHtml(row.file_name)}</strong><small>${escapeHtml(row.mime_type)} · ${fileSize(row.size_bytes)} · ${dateTime(row.created_at)}</small></div><div class="row-actions">${controls}</div></div>`;
+}
+function historyRow(row) {
+  return `<div class="history-row"><span class="tag tag-blue">${escapeHtml(auditActionLabel(row.action))}</span><time>${dateTime(row.created_at)}</time></div>`;
+}
+function userRow(row) {
+  return `<tr><td><strong>${escapeHtml(row.full_name || "—")}</strong><small>${escapeHtml(row.email)}</small></td><td>${statusTag(row.role)}</td><td>${row.active ? `<span class="tag tag-green">Aktywne</span>` : `<span class="tag tag-red">Oczekuje</span>`}</td><td>${dateTime(row.created_at)}</td><td class="row-actions"><button class="table-action" type="button" data-action="manage-user" data-id="${row.id}">Zmień</button></td></tr>`;
 }
 
-function openEntryModal(mode) {
-  if ((mode === "contract" || mode === "settlement") && !canManageContracts()) return;
-  if ((mode === "invoice" || mode === "cost") && !canManageFinance()) return;
+function openEntryModal(mode, record = null) {
+  if (["contract", "settlement", "change", "document"].includes(mode) && !canManageContracts()) return;
+  if (["invoice", "cost"].includes(mode) && !canManageFinance()) return;
+  if (["invite", "manage-user"].includes(mode) && !isOwner()) return;
+  if (["change", "document"].includes(mode) && !state.contractDetail?.id) return;
   state.modalMode = mode;
+  state.modalRecord = record;
   formError.hidden = true;
-  const definitions = formDefinition(mode);
+  const definitions = formDefinition(mode, record || {});
   modalEyebrow.textContent = definitions.eyebrow;
   modalTitle.textContent = definitions.title;
   modalFields.innerHTML = definitions.fields;
   modal.showModal();
 }
 
-function formDefinition(mode) {
-  const options = (items, selected = "") => items.map(([value, label]) => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
-  const contracts = state.contracts.map((row) => [row.id, row.name]);
-  const contractSelect = contracts.length ? options([["", "Wybierz kontrakt"], ...contracts]) : `<option value="">Najpierw dodaj kontrakt</option>`;
+function formDefinition(mode, record) {
+  const options = (items, selected = "") => items.map(([value, label]) => `<option value="${escapeHtml(value)}" ${String(value) === String(selected || "") ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+  const selectedContractId = record.contract_id || (state.activeView === "contractDetail" ? state.contractDetail?.id : "");
+  const contractRows = [...state.contracts];
+  if (state.contractDetail?.id && !contractRows.some((row) => row.id === state.contractDetail.id)) contractRows.push(state.contractDetail);
+  const contractSelect = contractRows.length ? options([["", "Wybierz kontrakt"], ...contractRows.map((row) => [row.id, row.name])], selectedContractId) : `<option value="">Najpierw dodaj kontrakt</option>`;
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = `${today.slice(0, 7)}-01`;
   const field = (label, control, className = "") => `<label class="${className}">${label}${control}</label>`;
-  const input = (name, type, extra = "") => `<input name="${name}" type="${type}" ${extra} />`;
+  const val = (value) => `value="${escapeHtml(value ?? "")}"`;
+  const input = (name, type, value = "", extra = "") => `<input name="${name}" type="${type}" ${val(value)} ${extra} />`;
   const select = (name, values, extra = "") => `<select name="${name}" ${extra}>${values}</select>`;
-  const moneyInput = (name = "net_amount") => input(name, "number", "min=\"0\" step=\"0.01\" required");
-  const statusOptions = options([["nowa", "Nowa"], ["do_platnosci", "Do płatności"], ["oplacona", "Opłacona"], ["zaksiegowana", "Zaksięgowana"]], "do_platnosci");
+  const moneyValue = (cents) => Number(cents || 0) / 100;
+  const moneyInput = (name = "net_amount", value = "") => input(name, "number", value, "min=\"0\" step=\"0.01\" required");
+  const statusOptions = (selected = "do_platnosci") => options([["nowa", "Nowa"], ["do_platnosci", "Do płatności"], ["oplacona", "Opłacona"], ["zaksiegowana", "Zaksięgowana"]], selected);
 
   if (mode === "contract") return {
-    eyebrow: "NOWY KONTRAKT", title: "Dodaj kontrakt", fields: [
-      field("Nazwa kontraktu", input("name", "text", "required"), "full"),
-      field("Klient", input("client", "text", "required")),
-      field("Branża", select("trade", options([["elektryczna", "Elektryczna"], ["teletechniczna", "Teletechniczna"], ["mieszana", "Mieszana"]]))),
-      field("Wartość netto (zł)", moneyInput("value")),
-      field("Budżet kosztów netto (zł)", moneyInput("budget")),
-      field("Zaawansowanie bazowe (%)", input("baseline_progress", "number", "min=\"0\" max=\"100\" value=\"0\" required")),
-      field("Termin umowny", input("due_date", "date")),
-      field("Status", select("status", options([["w_realizacji", "W realizacji"], ["do_decyzji", "Do decyzji"], ["ryzyko", "Ryzyko"], ["zakonczony", "Zakończony"]]))),
+    eyebrow: record.id ? "EDYCJA KONTRAKTU" : "NOWY KONTRAKT", title: record.id ? "Edytuj kontrakt" : "Dodaj kontrakt", fields: [
+      field("Nazwa kontraktu", input("name", "text", record.name, "required"), "full"),
+      field("Numer kontraktu", input("contract_number", "text", record.contract_number)),
+      field("Klient", input("client", "text", record.client, "required")),
+      field("Branża", select("trade", options([["elektryczna", "Elektryczna"], ["teletechniczna", "Teletechniczna"], ["mieszana", "Mieszana"]], record.trade || "elektryczna"))),
+      field("Wartość netto (zł)", moneyInput("value", record.id ? moneyValue(record.value_cents) : "")),
+      field("Budżet kosztów netto (zł)", moneyInput("budget", record.id ? moneyValue(record.budget_cents) : "")),
+      field("Zaawansowanie bazowe (%)", input("baseline_progress", "number", record.id ? record.baseline_progress : 0, "min=\"0\" max=\"100\" required")),
+      field("Termin umowny", input("due_date", "date", record.due_date)),
+      field("Status", select("status", options([["w_realizacji", "W realizacji"], ["do_decyzji", "Do decyzji"], ["ryzyko", "Ryzyko"], ["zakonczony", "Zakończony"]], record.status || "w_realizacji"))),
+      field("Opis / zakres", `<textarea name="description" placeholder="Zakres prac, ważne ustalenia…">${escapeHtml(record.description || "")}</textarea>`, "full"),
     ].join("")
   };
   if (mode === "settlement") return {
-    eyebrow: "ROZLICZENIE KONTRAKTU", title: "Dodaj rozliczenie", fields: [
+    eyebrow: record.id ? "EDYCJA ROZLICZENIA" : "ROZLICZENIE KONTRAKTU", title: record.id ? "Edytuj rozliczenie" : "Dodaj rozliczenie", fields: [
       field("Kontrakt", select("contract_id", contractSelect, "required"), "full"),
-      field("Okres", input("period", "date", `value=\"${firstDay}\" required`)),
-      field("Data rozliczenia", input("settlement_date", "date", `value=\"${today}\" required`)),
-      field("Rodzaj", select("kind", options([["przerob", "Przerób"], ["faktura", "Faktura"], ["koszt", "Koszt"], ["platnosc", "Płatność"], ["zaliczka", "Zaliczka"], ["korekta", "Korekta"]]))),
-      field("Kwota netto (zł)", moneyInput()),
-      field("VAT (%)", input("vat_rate", "number", "min=\"0\" max=\"100\" step=\"0.01\" value=\"23\" required")),
-      field("Numer / opis", input("reference_number", "text")),
-      field("Kategoria budżetowa", input("budget_category", "text", "value=\"pozostałe\"")),
-      field("Status", select("status", options([["robocze", "Robocze"], ["do_akceptacji", "Do akceptacji"], ["zafakturowane", "Zafakturowane"], ["oplacone", "Opłacone"]]))),
+      field("Okres", input("period", "date", record.period || firstDay, "required")),
+      field("Data rozliczenia", input("settlement_date", "date", record.settlement_date || today, "required")),
+      field("Rodzaj", select("kind", options([["przerob", "Przerób"], ["faktura", "Faktura"], ["koszt", "Koszt"], ["platnosc", "Płatność"], ["zaliczka", "Zaliczka"], ["korekta", "Korekta"]], record.kind || "przerob"))),
+      field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
+      field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
+      field("Numer / opis", input("reference_number", "text", record.reference_number)),
+      field("Kategoria budżetowa", input("budget_category", "text", record.budget_category || "pozostałe")),
+      field("Status", select("status", options([["robocze", "Robocze"], ["do_akceptacji", "Do akceptacji"], ["zafakturowane", "Zafakturowane"], ["oplacone", "Opłacone"]], record.status || "robocze"))),
     ].join("")
   };
   if (mode === "invoice") return {
-    eyebrow: "REJESTR FAKTUR", title: "Dodaj fakturę", fields: [
-      field("Typ faktury", select("invoice_type", options([["purchase", "Zakupowa"], ["sales", "Sprzedażowa"]]))),
-      field("Źródło", select("source", options([["manual", "Ręczna"], ["ksef", "KSeF"]]))),
-      field("Numer dokumentu", input("document_number", "text", "required")),
-      field("Kontrahent", input("counterparty", "text", "required")),
-      field("Data wystawienia", input("issue_date", "date", `value=\"${today}\" required`)),
-      field("Termin płatności", input("due_date", "date")),
-      field("Kwota netto (zł)", moneyInput()),
-      field("VAT (%)", input("vat_rate", "number", "min=\"0\" max=\"100\" step=\"0.01\" value=\"23\" required")),
-      field("Przypisanie", select("allocation", options([["unassigned", "Do przypisania"], ["contract", "Kontrakt"], ["company", "Koszt firmowy"]]))),
+    eyebrow: record.id ? "EDYCJA FAKTURY" : "REJESTR FAKTUR", title: record.id ? "Edytuj fakturę" : "Dodaj fakturę", fields: [
+      field("Typ faktury", select("invoice_type", options([["purchase", "Zakupowa"], ["sales", "Sprzedażowa"]], record.invoice_type || "purchase"))),
+      field("Źródło", select("source", options([["manual", "Ręczna"], ["ksef", "KSeF"]], record.source || "manual"))),
+      field("Numer dokumentu", input("document_number", "text", record.document_number, "required")),
+      field("Kontrahent", input("counterparty", "text", record.counterparty, "required")),
+      field("Data wystawienia", input("issue_date", "date", record.issue_date || today, "required")),
+      field("Termin płatności", input("due_date", "date", record.due_date)),
+      field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
+      field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
+      field("Przypisanie", select("allocation", options([["unassigned", "Do przypisania"], ["contract", "Kontrakt"], ["company", "Koszt firmowy"]], record.allocation || (state.activeView === "contractDetail" ? "contract" : "unassigned")))),
       field("Kontrakt (gdy przypisanie: kontrakt)", select("contract_id", contractSelect)),
-      field("Kategoria firmowa (gdy koszt firmowy)", input("company_category", "text")),
-      field("Status płatności", select("payment_status", statusOptions)),
+      field("Kategoria firmowa (gdy koszt firmowy)", input("company_category", "text", record.company_category)),
+      field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
     ].join("")
   };
-  return {
-    eyebrow: "KOSZTY FIRMOWE", title: "Dodaj koszt firmowy", fields: [
-      field("Data kosztu", input("cost_date", "date", `value=\"${today}\" required`)),
-      field("Kategoria", select("category", options([["paliwo", "Paliwo"], ["najem", "Najem lokalu"], ["narzedzia", "Narzędzia"], ["administracja", "Administracja"], ["inne", "Inne"]]))),
-      field("Opis", `<textarea name="description" placeholder="Np. najem biura — wrzesień"></textarea>`, "full"),
-      field("Dostawca", input("vendor", "text")),
-      field("Numer dokumentu", input("document_number", "text")),
-      field("Kwota netto (zł)", moneyInput()),
-      field("VAT (%)", input("vat_rate", "number", "min=\"0\" max=\"100\" step=\"0.01\" value=\"23\" required")),
-      field("Status płatności", select("payment_status", statusOptions)),
-    ].join("")
-  };
+  if (mode === "cost") return {
+    return {
+      eyebrow: record.id ? "EDYCJA KOSZTU" : "KOSZTY FIRMOWE", title: record.id ? "Edytuj koszt firmowy" : "Dodaj koszt firmowy", fields: [
+        field("Data kosztu", input("cost_date", "date", record.cost_date || today, "required")),
+        field("Kategoria", select("category", options([["paliwo", "Paliwo"], ["najem", "Najem lokalu"], ["narzedzia", "Narzędzia"], ["administracja", "Administracja"], ["inne", "Inne"]], record.category || "paliwo"))),
+        field("Opis", `<textarea name="description" placeholder="Np. najem biura — wrzesień">${escapeHtml(record.description || "")}</textarea>`, "full"),
+        field("Dostawca", input("vendor", "text", record.vendor)),
+        field("Numer dokumentu", input("document_number", "text", record.document_number)),
+        field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
+        field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
+        field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
+      ].join("")
+    };
+  }
+  if (mode === "change") return {
+    return {
+      eyebrow: record.id ? "EDYCJA DECYZJI" : "ZMIANA / ROSZCZENIE / RYZYKO", title: record.id ? "Edytuj pozycję" : "Dodaj pozycję", fields: [
+        field("Rodzaj", select("kind", options([["zmiana", "Zmiana"], ["roszczenie", "Roszczenie"], ["ryzyko", "Ryzyko"]], record.kind || "zmiana"))),
+        field("Termin decyzji", input("due_date", "date", record.due_date)),
+        field("Tytuł", input("title", "text", record.title, "required"), "full"),
+        field("Opis", `<textarea name="description" placeholder="Opis wpływu, ustaleń oraz kolejny krok…">${escapeHtml(record.description || "")}</textarea>`, "full"),
+        field("Wpływ netto (zł; minus oznacza koszt / ryzyko)", input("net_amount", "number", record.id ? moneyValue(record.net_amount_cents) : 0, "step=\"0.01\" required")),
+      ].join("")
+    };
+  }
+  if (mode === "document") return {
+    return { eyebrow: "DOKUMENT KONTRAKTU", title: "Dodaj dokument", fields: field("Plik (PDF, JPG, PNG lub XLSX; maks. 10 MB)", `<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />`, "full") };
+  }
+  if (mode === "invite") return {
+    return { eyebrow: "NOWE KONTO", title: "Utwórz konto użytkownika", fields: [
+      field("Imię i nazwisko", input("full_name", "text", "", "required")),
+      field("Firmowy e-mail", input("email", "email", "", "autocomplete=\"off\" required")),
+      field("Hasło tymczasowe (min. 10 znaków)", input("password", "password", "", "minlength=\"10\" autocomplete=\"new-password\" required")),
+      field("Rola", select("role", options([["manager", "Kierownik kontraktu"], ["accountant", "Księgowość"], ["viewer", "Podgląd"]], "viewer"))),
+    ].join("") };
+  }
+  return { eyebrow: "UPRAWNIENIA", title: "Zmień konto użytkownika", fields: [
+    field("Imię i nazwisko", input("full_name", "text", record.full_name, "required")),
+    field("Firmowy e-mail", input("email", "email", record.email, "disabled")),
+    field("Rola", select("role", options([["owner", "Właściciel"], ["manager", "Kierownik kontraktu"], ["accountant", "Księgowość"], ["viewer", "Podgląd"]], record.role))),
+    field("Dostęp", select("active", options([["true", "Aktywne"], ["false", "Wyłączone"]], String(record.active)))),
+  ].join("") };
 }
 
 entryForm.addEventListener("submit", async (event) => {
@@ -462,16 +672,25 @@ entryForm.addEventListener("submit", async (event) => {
   const supabase = state.supabase;
   const form = new FormData(entryForm);
   const mode = state.modalMode;
+  const record = state.modalRecord;
   const submit = entryForm.querySelector("button[type=submit]");
   formError.hidden = true;
-
   try {
     submit.disabled = true;
     submit.textContent = "Zapisywanie…";
-    const { table, payload } = formPayload(mode, form);
-    const { error } = await supabase.from(table).insert(payload);
-    if (error) throw error;
+    if (mode === "document") await saveDocument(form);
+    else if (mode === "invite") await createUser(form);
+    else if (mode === "manage-user") await updateUser(form, record);
+    else {
+      const { table, payload } = formPayload(mode, form);
+      const query = record?.id
+        ? supabase.from(table).update(payload).eq("id", record.id)
+        : supabase.from(table).insert({ ...payload, created_by: state.user.id });
+      const { error } = await query;
+      if (error) throw error;
+    }
     modal.close();
+    state.modalRecord = null;
     await loadView(supabase);
   } catch (error) {
     formError.textContent = error.message || "Nie udało się zapisać pozycji.";
@@ -485,25 +704,199 @@ entryForm.addEventListener("submit", async (event) => {
 document.querySelector("#modal-close").addEventListener("click", () => modal.close());
 document.querySelector("#modal-cancel").addEventListener("click", () => modal.close());
 
+async function saveDocument(form) {
+  const file = form.get("file");
+  if (!(file instanceof File) || !file.size) throw new Error("Wybierz plik do wysłania.");
+  if (file.size > 10485760) throw new Error("Plik jest większy niż dozwolone 10 MB.");
+  const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"];
+  if (!allowedTypes.includes(file.type)) throw new Error("Dozwolone są wyłącznie pliki PDF, JPG, PNG i XLSX.");
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "dokument";
+  const unique = globalThis.crypto?.randomUUID?.() || String(Date.now());
+  const storagePath = `${state.contractDetail.id}/${unique}-${safeName}`;
+  const { error: uploadError } = await state.supabase.storage.from("contract-documents").upload(storagePath, file, { contentType: file.type, upsert: false });
+  if (uploadError) throw uploadError;
+  const { error: recordError } = await state.supabase.from("contract_documents").insert({
+    contract_id: state.contractDetail.id,
+    file_name: file.name,
+    storage_path: storagePath,
+    mime_type: file.type,
+    size_bytes: file.size,
+    uploaded_by: state.user.id,
+  });
+  if (recordError) {
+    await state.supabase.storage.from("contract-documents").remove([storagePath]);
+    throw recordError;
+  }
+}
+
+async function createUser(form) {
+  const { data, error } = await state.supabase.functions.invoke("admin-users", {
+    body: { fullName: String(form.get("full_name") || "").trim(), email: String(form.get("email") || "").trim(), password: String(form.get("password") || ""), role: String(form.get("role") || "viewer") },
+  });
+  if (error || data?.error) throw new Error(data?.error || error?.message || "Nie udało się utworzyć konta.");
+}
+
+async function updateUser(form, record) {
+  if (!record?.id) throw new Error("Nie wybrano użytkownika.");
+  const active = String(form.get("active")) === "true";
+  if (record.id === state.user.id && !active) throw new Error("Nie możesz wyłączyć własnego konta.");
+  const { error } = await state.supabase.from("profiles").update({
+    full_name: String(form.get("full_name") || "").trim(),
+    role: String(form.get("role") || "viewer"),
+    active,
+  }).eq("id", record.id);
+  if (error) throw error;
+}
+
 function formPayload(mode, form) {
   const value = (key) => String(form.get(key) || "").trim();
   const number = (key) => toCents(value(key));
   const vat = () => Number(value("vat_rate") || 0);
-  if (mode === "contract") return { table: "contracts", payload: { name: value("name"), client: value("client"), trade: value("trade"), value_cents: number("value"), budget_cents: number("budget"), baseline_progress: Number(value("baseline_progress")), due_date: value("due_date") || null, status: value("status"), created_by: state.user.id } };
-  if (mode === "settlement") return { table: "settlements", payload: { contract_id: value("contract_id"), period: value("period"), settlement_date: value("settlement_date"), kind: value("kind"), net_amount_cents: number("net_amount"), vat_rate: vat(), reference_number: value("reference_number"), budget_category: value("budget_category") || "pozostale", status: value("status"), created_by: state.user.id } };
+  if (mode === "contract") return { table: "contracts", payload: { name: value("name"), contract_number: value("contract_number"), client: value("client"), trade: value("trade"), description: value("description"), value_cents: number("value"), budget_cents: number("budget"), baseline_progress: Number(value("baseline_progress")), due_date: value("due_date") || null, status: value("status") } };
+  if (mode === "settlement") return { table: "settlements", payload: { contract_id: value("contract_id"), period: value("period"), settlement_date: value("settlement_date"), kind: value("kind"), net_amount_cents: number("net_amount"), vat_rate: vat(), reference_number: value("reference_number"), budget_category: value("budget_category") || "pozostale", status: value("status") } };
   if (mode === "invoice") {
     const allocation = value("allocation");
     const contractId = value("contract_id");
     const category = value("company_category");
     if (allocation === "contract" && !contractId) throw new Error("Wybierz kontrakt dla tego przypisania.");
     if (allocation === "company" && !category) throw new Error("Podaj kategorię kosztu firmowego.");
-    return { table: "invoices", payload: { invoice_type: value("invoice_type"), source: value("source"), document_number: value("document_number"), counterparty: value("counterparty"), issue_date: value("issue_date"), due_date: value("due_date") || null, net_amount_cents: number("net_amount"), vat_rate: vat(), allocation, contract_id: allocation === "contract" ? contractId : null, company_category: allocation === "company" ? category : null, payment_status: value("payment_status"), created_by: state.user.id } };
+    return { table: "invoices", payload: { invoice_type: value("invoice_type"), source: value("source"), document_number: value("document_number"), counterparty: value("counterparty"), issue_date: value("issue_date"), due_date: value("due_date") || null, net_amount_cents: number("net_amount"), vat_rate: vat(), allocation, contract_id: allocation === "contract" ? contractId : null, company_category: allocation === "company" ? category : null, payment_status: value("payment_status") } };
   }
-  return { table: "company_costs", payload: { cost_date: value("cost_date"), category: value("category"), description: value("description"), vendor: value("vendor"), document_number: value("document_number"), net_amount_cents: number("net_amount"), vat_rate: vat(), payment_status: value("payment_status"), created_by: state.user.id } };
+  if (mode === "cost") return { table: "company_costs", payload: { cost_date: value("cost_date"), category: value("category"), description: value("description"), vendor: value("vendor"), document_number: value("document_number"), net_amount_cents: number("net_amount"), vat_rate: vat(), payment_status: value("payment_status") } };
+  if (mode === "change") return { table: "contract_changes", payload: { contract_id: state.contractDetail.id, kind: value("kind"), title: value("title"), description: value("description"), net_amount_cents: toSignedCents(value("net_amount")), due_date: value("due_date") || null } };
+  throw new Error("Nieprawidłowy formularz.");
+}
+
+async function handleAction(element) {
+  const action = element.dataset.action;
+  const id = element.dataset.id;
+  try {
+    if (action === "edit-contract") return openEntryModal("contract", state.contractDetail);
+    if (action === "delete-contract") return await deleteContract();
+    if (action === "manage-user") {
+      const user = state.users.find((row) => row.id === id);
+      if (user) openEntryModal("manage-user", user);
+      return;
+    }
+    const editable = {
+      "edit-settlement": ["settlement", state.settlements],
+      "edit-invoice": ["invoice", state.invoices],
+      "edit-cost": ["cost", state.costs],
+      "edit-change": ["change", state.changes],
+    }[action];
+    if (editable) {
+      const record = editable[1].find((row) => row.id === id);
+      if (record) openEntryModal(editable[0], record);
+      return;
+    }
+    if (action === "print-report") return window.print();
+    if (action === "export-report") return exportReportCsv();
+    if (action === "import-ksef") return await requestKsefImport();
+    if (action === "download-document") return await downloadDocument(id);
+
+    if (action === "approve-settlement") {
+      if (!canManageContracts()) throw new Error("Brak uprawnień do akceptacji rozliczenia.");
+      const { error } = await state.supabase.from("settlements").update({ status: "zafakturowane", approved_at: new Date().toISOString(), approved_by: state.user.id }).eq("id", id);
+      if (error) throw error;
+      return await loadView(state.supabase);
+    }
+    if (action === "approve-change" || action === "reject-change") {
+      if (!canManageContracts()) throw new Error("Brak uprawnień do podjęcia decyzji.");
+      const { error } = await state.supabase.from("contract_changes").update({
+        status: action === "approve-change" ? "zaakceptowane" : "odrzucone",
+        decided_at: new Date().toISOString(),
+        decided_by: state.user.id,
+      }).eq("id", id);
+      if (error) throw error;
+      return await loadView(state.supabase);
+    }
+
+    const deletion = {
+      "delete-settlement": ["settlements", "rozliczenie", canManageContracts()],
+      "delete-invoice": ["invoices", "fakturę", canManageFinance()],
+      "delete-cost": ["company_costs", "koszt firmowy", canManageFinance()],
+      "delete-change": ["contract_changes", "pozycję decyzji", canManageContracts()],
+    }[action];
+    if (deletion) {
+      if (!deletion[2]) throw new Error("Brak uprawnień do usunięcia pozycji.");
+      if (!window.confirm(`Czy na pewno usunąć ${deletion[1]}? Tej operacji nie można cofnąć.`)) return;
+      const { error } = await state.supabase.from(deletion[0]).delete().eq("id", id);
+      if (error) throw error;
+      return await loadView(state.supabase);
+    }
+    if (action === "delete-document") return await deleteDocument(id);
+  } catch (error) {
+    window.alert(error.message || "Nie udało się wykonać operacji.");
+  }
+}
+
+async function downloadDocument(id) {
+  const document = state.documents.find((row) => row.id === id);
+  if (!document) throw new Error("Nie znaleziono dokumentu.");
+  const { data, error } = await state.supabase.storage.from("contract-documents").createSignedUrl(document.storage_path, 60);
+  if (error) throw error;
+  window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+}
+
+async function deleteDocument(id) {
+  if (!canManageContracts()) throw new Error("Brak uprawnień do usunięcia dokumentu.");
+  const document = state.documents.find((row) => row.id === id);
+  if (!document) throw new Error("Nie znaleziono dokumentu.");
+  if (!window.confirm(`Czy na pewno usunąć dokument „${document.file_name}”?`)) return;
+  const { error: storageError } = await state.supabase.storage.from("contract-documents").remove([document.storage_path]);
+  if (storageError) throw storageError;
+  const { error } = await state.supabase.from("contract_documents").delete().eq("id", id);
+  if (error) throw error;
+  return await loadView(state.supabase);
+}
+
+async function deleteContract() {
+  if (!canManageContracts()) throw new Error("Brak uprawnień do usunięcia kontraktu.");
+  const contract = state.contractDetail;
+  if (!contract?.id) throw new Error("Nie wybrano kontraktu.");
+  const message = `Czy na pewno usunąć kontrakt „${contract.name}”? Usunięte zostaną jego rozliczenia, zmiany i dokumenty. Faktury pozostaną w rejestrze jako nieprzypisane.`;
+  if (!window.confirm(message)) return;
+  if (state.documents.length) {
+    const { error: storageError } = await state.supabase.storage.from("contract-documents").remove(state.documents.map((row) => row.storage_path));
+    if (storageError) throw storageError;
+  }
+  const { error } = await state.supabase.from("contracts").delete().eq("id", contract.id);
+  if (error) throw error;
+  state.contractDetail = null;
+  state.activeView = "contracts";
+  renderShell(state.supabase);
+  await loadView(state.supabase);
+}
+
+async function requestKsefImport() {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do importu KSeF.");
+  const { data, error } = await state.supabase.functions.invoke("import-ksef", { body: { environment: "production" } });
+  if (error || data?.error) throw new Error(data?.error || error?.message || "Nie udało się uruchomić importu KSeF.");
+  window.alert(data?.message || "Zlecono sprawdzenie połączenia KSeF.");
+}
+
+function exportReportCsv() {
+  const rows = [
+    ["Kontrakt", "Klient", "Branża", "Wartość netto", "Budżet netto", "Postęp (%)", "Termin", "Status"],
+    ...state.contracts.map((row) => [row.name, row.client || "", row.trade || "", (Number(row.value_cents || 0) / 100).toFixed(2), (Number(row.budget_cents || 0) / 100).toFixed(2), String(row.baseline_progress || 0), row.due_date || "", statusText(row.status)]),
+  ];
+  const csv = `\ufeff${rows.map((row) => row.map(csvValue).join(";")).join("\r\n")}`;
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `PradPlan-raport-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function csvValue(value) {
+  const text = String(value ?? "");
+  return /[;"\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
 function canManageContracts() { return ["owner", "manager"].includes(state.profile?.role); }
 function canManageFinance() { return ["owner", "accountant"].includes(state.profile?.role); }
+function isOwner() { return state.profile?.role === "owner"; }
 function userDisplayName() {
   const profileName = String(state.profile?.full_name || "").trim();
   if (profileName) return profileName;
@@ -528,10 +921,16 @@ function normalizeSupabaseUrl(value) {
 function sum(rows, field) { return rows.reduce((total, row) => total + Number(row[field] || 0), 0); }
 function money(cents) { return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(cents || 0) / 100); }
 function date(value) { return value ? new Intl.DateTimeFormat("pl-PL").format(new Date(`${value}T12:00:00`)) : "—"; }
+function dateTime(value) { return value ? new Intl.DateTimeFormat("pl-PL", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—"; }
+function fileSize(value) { const bytes = Number(value || 0); if (bytes < 1024) return `${bytes} B`; if (bytes < 1048576) return `${Math.round(bytes / 1024)} KB`; return `${(bytes / 1048576).toFixed(1).replace(".", ",")} MB`; }
 function toCents(value) { const amount = Number(String(value).replace(",", ".")); if (!Number.isFinite(amount) || amount < 0) throw new Error("Podaj prawidłową kwotę dodatnią lub zero."); return Math.round(amount * 100); }
+function toSignedCents(value) { const amount = Number(String(value).replace(",", ".")); if (!Number.isFinite(amount)) throw new Error("Podaj prawidłową kwotę."); return Math.round(amount * 100); }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'\"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", "\"": "&quot;" })[char]); }
 function relationName(relation) { return Array.isArray(relation) ? relation[0]?.name || "—" : relation?.name || "—"; }
 function clampProgress(value) { return Math.max(0, Math.min(100, Number(value || 0))); }
 function kindLabel(kind) { return ({ przerob: "Przerób", faktura: "Faktura", koszt: "Koszt", platnosc: "Płatność", zaliczka: "Zaliczka", korekta: "Korekta" })[kind] || kind || "—"; }
+function changeKindLabel(kind) { return ({ zmiana: "Zmiana", roszczenie: "Roszczenie", ryzyko: "Ryzyko" })[kind] || kind || "—"; }
+function auditActionLabel(action) { return ({ insert: "Utworzono", update: "Zmieniono", delete: "Usunięto" })[action] || action || "Zdarzenie"; }
 function roleLabel(role) { return ({ owner: "Właściciel", manager: "Kierownik", accountant: "Księgowość", viewer: "Podgląd" })[role] || "Podgląd"; }
-function statusTag(status) { const names = { w_realizacji: "W realizacji", do_decyzji: "Do decyzji", ryzyko: "Ryzyko", zakonczony: "Zakończony", robocze: "Robocze", do_akceptacji: "Do akceptacji", zafakturowane: "Zafakturowane", oplacone: "Opłacone", nowa: "Nowa", do_platnosci: "Do płatności", zaksiegowana: "Zaksięgowana" }; const tone = ["ryzyko", "do_decyzji", "do_akceptacji"].includes(status) ? "red" : ["w_realizacji", "oplacone", "zaksiegowana", "zakonczony"].includes(status) ? "green" : "blue"; return `<span class="tag tag-${tone}">${names[status] || escapeHtml(status)}</span>`; }
+function statusText(status) { return ({ w_realizacji: "W realizacji", do_decyzji: "Do decyzji", ryzyko: "Ryzyko", zakonczony: "Zakończony", robocze: "Robocze", do_akceptacji: "Do akceptacji", zafakturowane: "Zafakturowane", oplacone: "Opłacone", nowa: "Nowa", do_platnosci: "Do płatności", zaksiegowana: "Zaksięgowana", otwarte: "Otwarte", zaakceptowane: "Zaakceptowane", odrzucone: "Odrzucone", owner: "Właściciel", manager: "Kierownik", accountant: "Księgowość", viewer: "Podgląd" })[status] || String(status || "—"); }
+function statusTag(status) { const tone = ["ryzyko", "do_decyzji", "do_akceptacji", "odrzucone"].includes(status) ? "red" : ["w_realizacji", "oplacone", "zaksiegowana", "zakonczony", "zaakceptowane"].includes(status) ? "green" : "blue"; return `<span class="tag tag-${tone}">${escapeHtml(statusText(status))}</span>`; }
