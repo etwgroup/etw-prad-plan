@@ -453,14 +453,16 @@ function renderInvoices() {
 
 function renderCosts() {
   const canAdd = canManageFinance();
+  const categories = ["paliwo", "narzedzia", "ubior_bhp", "najem_lokali", "pozostale"];
   return `
-    ${heading("ETW GROUP / FINANSE", "Koszty firmowe", "Koszty ogólne niezwiązane z konkretnym kontraktem — paliwo, najem, administracja i inne.", canAdd ? button("+ Dodaj koszt", "cost") : "")}
+    ${heading("ETW GROUP / FINANSE", "Koszty firmowe", "Koszty ogólne niezwiązane z konkretnym kontraktem, podzielone na pięć kategorii firmowych.", canAdd ? button("+ Dodaj koszt", "cost") : "")}
     <section class="metric-grid">
       ${metric("Pozycje", String(state.costs.length), "Rejestr bieżący", "yellow")}
       ${metric("Koszty firmowe", money(sum(state.costs, "net_amount_cents")), "Netto", "red")}
       ${metric("Do płatności", String(state.costs.filter((row) => row.payment_status === "do_platnosci").length), "Bieżące zobowiązania", "blue")}
       ${metric("Opłacone", String(state.costs.filter((row) => row.payment_status === "oplacona").length), "Status płatności", "green")}
     </section>
+    <section class="cost-breakdown" aria-label="Podział kosztów firmowych">${categories.map((category) => costCategoryCard(category, state.costs)).join("")}</section>
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr kosztów firmowych</h2><p>Pozycje nie są doliczane do budżetu pojedynczego kontraktu.</p></div></div>
       ${state.costs.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${state.costs.map(costRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów firmowych.")}
@@ -553,6 +555,10 @@ function heading(eyebrow, title, description, actions = "") {
 function button(label, mode) { return `<button class="button button-primary" type="button" data-add="${mode}">${label}</button>`; }
 function metric(label, value, tagText, tone) { return `<article class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div><span class="tag tag-${tone}">${tagText}</span></article>`; }
 function emptyState(text) { return `<div class="empty">${text}</div>`; }
+function costCategoryCard(category, rows) {
+  const matching = rows.filter((row) => normalizeCostCategory(row.category) === category);
+  return `<article class="cost-category-card"><p>${escapeHtml(costCategoryLabel(category))}</p><strong>${money(sum(matching, "net_amount_cents"))}</strong><small>${matching.length} ${matching.length === 1 ? "pozycja" : "pozycje"}</small></article>`;
+}
 
 function contractRow(row) {
   return `<tr><td><button class="table-link" type="button" data-contract-id="${row.id}">${escapeHtml(row.name)}</button><small>${escapeHtml(row.client || "—")}</small></td><td>${escapeHtml(row.trade || "—")}</td><td class="money">${money(row.value_cents)}</td><td class="contract-progress"><strong>${row.baseline_progress}%</strong><div class="progress"><span style="width:${clampProgress(row.baseline_progress)}%"></span></div></td><td>${date(row.due_date)}</td><td>${statusTag(row.status)}</td></tr>`;
@@ -573,7 +579,7 @@ function invoiceRow(row) {
 }
 function costRow(row) {
   const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-cost" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-cost" data-id="${row.id}">Usuń</button>` : "";
-  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(row.category)}</td><td><strong>${escapeHtml(row.description || "—")}</strong></td><td>${escapeHtml(row.vendor || "—")}</td><td>${escapeHtml(row.document_number || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(costCategoryLabel(row.category))}</td><td><strong>${escapeHtml(row.description || "—")}</strong></td><td>${escapeHtml(row.vendor || "—")}</td><td>${escapeHtml(row.document_number || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function detailSettlementRow(row) {
   const controls = canManageContracts() ? `${row.status === "do_akceptacji" ? `<button class="table-action" type="button" data-action="approve-settlement" data-id="${row.id}">Akceptuj</button>` : ""}<button class="table-action" type="button" data-action="edit-settlement" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-settlement" data-id="${row.id}">Usuń</button>` : "";
@@ -713,7 +719,7 @@ function formDefinition(mode, record) {
   if (mode === "cost") return {
     eyebrow: record.id ? "EDYCJA KOSZTU" : "KOSZTY FIRMOWE", title: record.id ? "Edytuj koszt firmowy" : "Dodaj koszt firmowy", fields: [
       field("Data kosztu", input("cost_date", "date", record.cost_date || today, "required")),
-      field("Kategoria", select("category", options([["paliwo", "Paliwo"], ["najem", "Najem lokalu"], ["narzedzia", "Narzędzia"], ["administracja", "Administracja"], ["inne", "Inne"]], record.category || "paliwo"))),
+      field("Kategoria", select("category", options([["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.category || "paliwo")))),
       field("Opis", `<textarea name="description" placeholder="Np. najem biura — wrzesień">${escapeHtml(record.description || "")}</textarea>`, "full"),
       field("Dostawca", input("vendor", "text", record.vendor)),
       field("Numer dokumentu", input("document_number", "text", record.document_number)),
@@ -1086,6 +1092,8 @@ function normalizeSupabaseUrl(value) {
   }
 }
 function sum(rows, field) { return rows.reduce((total, row) => total + Number(row[field] || 0), 0); }
+function normalizeCostCategory(category) { return ({ najem: "najem_lokali", administracja: "pozostale", inne: "pozostale" })[category] || category || "pozostale"; }
+function costCategoryLabel(category) { return ({ paliwo: "Paliwo", narzedzia: "Narzędzia", ubior_bhp: "Ubiór BHP", najem_lokali: "Najem lokali", pozostale: "Pozostałe" })[normalizeCostCategory(category)] || "Pozostałe"; }
 function money(cents) { return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(cents || 0) / 100); }
 function date(value) { return value ? new Intl.DateTimeFormat("pl-PL").format(new Date(`${value}T12:00:00`)) : "—"; }
 function dateTime(value) { return value ? new Intl.DateTimeFormat("pl-PL", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—"; }
