@@ -10,13 +10,15 @@
   --green: #247057;
   --red: #b13a3b;
   --shadow: 0 18px 45px rgba(0, 0, 0, 0.08);
-  font-family: "Manrope", Arial, sans-serif;
+  font-family: "Inter", Arial, sans-serif;
   color: var(--ink);
   background: var(--paper);
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; background: var(--paper); }
+html, body, #app { width: 100%; min-height: 100%; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { min-width: 320px; background: var(--paper); }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
@@ -31,7 +33,7 @@ button { cursor: pointer; }
 .loading-screen p:last-child, .setup-screen > p { color: var(--ink-soft); }
 .eyebrow { margin: 0; color: #8c6500; font-size: 12px; font-weight: 800; letter-spacing: .14em; }
 
-.auth-screen { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: 100dvh; min-height: 0; overflow: hidden; padding: 0; background: var(--white); }
+.auth-screen { position: fixed; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); width: 100vw; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; padding: 0; background: var(--white); }
 .auth-hero { position: relative; overflow: hidden; min-height: 0; color: var(--white); background: #030303; text-align: left; }
 .auth-hero::before, .auth-hero::after { position: absolute; width: 720px; height: 720px; border: 2px solid rgba(255, 213, 0, .2); border-radius: 50%; content: ""; pointer-events: none; }
 .auth-hero::before { top: -430px; right: -285px; }
@@ -149,7 +151,7 @@ textarea { min-height: 85px; resize: vertical; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .auth-screen { display: block; height: auto; overflow: visible; }
+  .auth-screen { position: static; display: block; width: auto; height: auto; overflow: visible; }
   .auth-hero { min-height: auto; }
   .auth-hero-inner { min-height: auto; padding: 38px 28px; }
   .auth-etw-logo { width: 116px; }
