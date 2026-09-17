@@ -64,7 +64,7 @@ function renderAuth(supabase) {
   state.user = null;
   state.profile = null;
   app.innerHTML = `
-    <section class="auth-screen">
+    <section class="auth-screen" style="position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;min-height:0;margin:0;padding:0;overflow:hidden">
       <section class="auth-hero" aria-label="PrądPlan — ETW Group">
         <div class="auth-hero-inner">
           <div class="auth-brand-lockup">
