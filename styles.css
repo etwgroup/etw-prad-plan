@@ -68,7 +68,7 @@ html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
 .form-grid label { display: grid; gap: 8px; font-size: 13px; font-weight: 700; }
 
 .app-layout { display: grid; grid-template-columns: 310px minmax(0, 1fr); min-height: 100vh; }
-.sidebar { display: flex; flex-direction: column; padding: 27px 22px; color: var(--white); background: var(--black); }
+.sidebar { position: sticky; top: 0; align-self: start; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow-y: auto; padding: 27px 22px; color: var(--white); background: var(--black); }
 .sidebar .brand-lockup { padding: 0 8px 26px; margin-bottom: 26px; border-bottom: 1px solid #333; }
 .sidebar-etw-logo { display: block; width: 104px; height: auto; object-fit: contain; }
 .sidebar .brand-mark { width: 76px; height: 46px; font-size: 20px; }
@@ -193,7 +193,7 @@ html body #app .auth-screen {
   .auth-form-intro { margin-bottom: 32px; font-size: 16px; }
   .auth-card .button { margin-top: 32px; }
   .app-layout { display: block; }
-  .sidebar { min-height: auto; padding: 15px; }
+  .sidebar { position: static; height: auto; min-height: auto; overflow: visible; padding: 15px; }
   .sidebar .brand-lockup, .sidebar-footer, .nav-label { display: none; }
   .nav { display: flex; overflow-x: auto; }
   .nav-button { flex: 0 0 auto; width: auto; padding: 10px; font-size: 11px; }
