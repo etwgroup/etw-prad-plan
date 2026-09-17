@@ -162,6 +162,8 @@ html body #app .auth-screen {
   inset: 0 !important;
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  place-content: stretch !important;
   width: 100vw !important;
   height: 100vh !important;
   height: 100dvh !important;
