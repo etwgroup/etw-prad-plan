@@ -70,6 +70,7 @@ html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
 .app-layout { display: grid; grid-template-columns: 310px minmax(0, 1fr); min-height: 100vh; }
 .sidebar { display: flex; flex-direction: column; padding: 27px 22px; color: var(--white); background: var(--black); }
 .sidebar .brand-lockup { padding: 0 8px 26px; margin-bottom: 26px; border-bottom: 1px solid #333; }
+.sidebar-etw-logo { display: block; width: 104px; height: auto; object-fit: contain; }
 .sidebar .brand-mark { width: 76px; height: 46px; font-size: 20px; }
 .nav-label { margin: 14px 12px 8px; color: #818181; font-size: 11px; font-weight: 800; letter-spacing: .14em; }
 .nav { display: grid; gap: 4px; }

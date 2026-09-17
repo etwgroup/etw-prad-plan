@@ -148,7 +148,7 @@ function renderShell(supabase) {
     <div class="app-layout">
       <aside class="sidebar">
         <div class="brand-lockup">
-          <div class="brand-mark">ETW</div>
+          <img class="sidebar-etw-logo" src="https://etwgroup.pl/wp-content/uploads/2024/10/ETW-logo.png" alt="ETW Group" width="142" height="85" />
           <div><strong>PrądPlan</strong><span>KONTRAKTY</span></div>
         </div>
         <p class="nav-label">PROWADZENIE</p>
