@@ -304,7 +304,7 @@ async function loadDashboardData(supabase) {
 async function loadSettlementData(supabase) {
   const [contracts, settlements] = await Promise.all([
     selectRows(supabase, "contracts", "id, name", "name", true),
-    selectRows(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category, status, contracts(name)", "settlement_date", false),
+    selectRows(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category, contracts(name)", "settlement_date", false),
   ]);
   state.contracts = contracts;
   state.settlements = settlements;
@@ -331,7 +331,7 @@ async function loadContractDetailData(supabase) {
     .single();
   if (contractError) throw contractError;
   const [settlements, invoices, changes, documents, schedule, history] = await Promise.all([
-    selectRowsBy(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category, status, approved_at", "contract_id", contractId, "settlement_date", false),
+    selectRowsBy(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category", "contract_id", contractId, "settlement_date", false),
     selectRowsBy(supabase, "invoices", "id, invoice_type, source, document_number, counterparty, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status", "contract_id", contractId, "issue_date", false),
     selectRowsBy(supabase, "contract_changes", "id, kind, title, description, net_amount_cents, status, due_date, decided_at", "contract_id", contractId, "created_at", false),
     selectRowsBy(supabase, "contract_documents", "id, file_name, storage_path, mime_type, size_bytes, created_at", "contract_id", contractId, "created_at", false),
@@ -426,13 +426,13 @@ function renderSettlements() {
     ${heading("ETW GROUP / KONTRAKTY", "Protokoły przerobowe", "Dokumentuj postęp robót. Protokoły nie wpływają na podsumowania finansowe kontraktów.", canAdd ? button("+ Dodaj protokół", "settlement") : "")}
     <section class="metric-grid">
       ${metric("Protokoły", String(state.settlements.length), "Rejestr bieżący", "yellow")}
-      ${metric("Do akceptacji", String(state.settlements.filter((row) => row.status === "do_akceptacji").length), "Wymagają decyzji", "red")}
-      ${metric("Zaakceptowane", String(state.settlements.filter((row) => row.status === "zaakceptowane").length), "Zamknięte protokoły", "green")}
+      ${metric("W tym miesiącu", String(state.settlements.filter((row) => monthKey(row.settlement_date) === currentMonthKey()).length), "Data protokołu", "blue")}
+      ${metric("Z numerem", String(state.settlements.filter((row) => row.reference_number).length), "Identyfikowalne", "green")}
       ${metric("Kontrakty", String(state.contracts.length), "Dostępne do wyboru", "blue")}
     </section>
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr protokołów przerobowych</h2><p>Każda pozycja dokumentuje wykonanie robót, ale nie zmienia wartości ani kosztów kontraktu.</p></div></div>
-      ${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kontrakt</th><th>Protokół</th><th>Opis / nr</th><th>Wartość informacyjna</th><th>Status</th></tr></thead><tbody>${state.settlements.map(settlementRow).join("")}</tbody></table></div>` : emptyState("Brak protokołów. Najpierw utwórz kontrakt, a potem dodaj protokół.")}
+      ${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kontrakt</th><th>Protokół</th><th>Opis / nr</th><th>Wartość informacyjna</th></tr></thead><tbody>${state.settlements.map(settlementRow).join("")}</tbody></table></div>` : emptyState("Brak protokołów. Najpierw utwórz kontrakt, a potem dodaj protokół.")}
     </section>`;
 }
 
@@ -526,7 +526,7 @@ function renderContractDetail() {
     ${isOwner() ? `<section class="panel contract-history"><div class="panel-head"><div><h2>Historia kontraktu</h2><p>Audyt zmian metadanych kontraktu — dostępny wyłącznie dla właściciela.</p></div></div>${state.history.length ? `<div class="history-list">${state.history.map(historyRow).join("")}</div>` : emptyState("Brak zarejestrowanych zmian kontraktu.")}</section>` : ""}
     <section class="panel schedule-panel"><div class="panel-head"><div><h2>Harmonogram kontraktu</h2><p>${state.schedule.length ? `${scheduleDone} z ${state.schedule.length} zadań zakończonych${scheduleDelayed ? ` · ${scheduleDelayed} opóźnionych` : ""}` : "Zadania, terminy i odpowiedzialność za realizację."}</p></div>${editable ? button("+ Dodaj zadanie", "schedule") : ""}</div>${state.schedule.length ? `<div class="table-wrap"><table><thead><tr><th>Zadanie</th><th>Termin</th><th>Odpowiedzialny</th><th>Postęp</th><th>Status</th><th></th></tr></thead><tbody>${state.schedule.map(scheduleRow).join("")}</tbody></table></div>${renderGantt(state.schedule)}` : emptyState("Brak zadań w harmonogramie. Dodaj pierwszy etap realizacji.")}</section>
     <section class="detail-grid">
-      <section class="panel"><div class="panel-head"><div><h2>Protokoły przerobowe</h2><p>Dokumentacja postępu robót — bez wpływu na podsumowania finansowe.</p></div></div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Protokół</th><th>Opis</th><th>Wartość informacyjna</th><th>Status</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak protokołów przerobowych.")}</section>
+      <section class="panel"><div class="panel-head"><div><h2>Protokoły przerobowe</h2><p>Dokumentacja postępu robót — bez wpływu na podsumowania finansowe.</p></div></div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Protokół</th><th>Opis</th><th>Wartość informacyjna</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak protokołów przerobowych.")}</section>
       <section class="panel"><div class="panel-head"><div><h2>Faktury kontraktu</h2><p>Zakupowe oraz sprzedażowe przypisane do tego kontraktu. Kaucja: ${percentLabel(retentionPercent)}.</p></div>${canManageFinance() ? button("+ Faktura", "invoice") : ""}</div>${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Typ</th><th>Netto</th><th>Kaucja</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(detailInvoiceRow).join("")}</tbody></table></div>` : emptyState("Brak przypisanych faktur.")}</section>
     </section>
     <section class="detail-grid">
@@ -591,7 +591,7 @@ function reportContractRow(row) {
   return `<tr><td><button class="table-link" type="button" data-contract-id="${row.id}">${escapeHtml(row.name)}</button><small>${escapeHtml(row.client || "—")}</small></td><td class="money">${money(row.value_cents)}</td><td class="money">${money(row.budget_cents)}</td><td>${row.baseline_progress}%</td><td>${statusTag(row.status)}</td></tr>`;
 }
 function settlementRow(row) {
-  return `<tr><td>${date(row.settlement_date)}<small>okres: ${date(row.period)}</small></td><td><strong>${escapeHtml(relationName(row.contracts))}</strong></td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.status)}</td></tr>`;
+  return `<tr><td>${date(row.settlement_date)}<small>okres: ${date(row.period)}</small></td><td><strong>${escapeHtml(relationName(row.contracts))}</strong></td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td></tr>`;
 }
 function invoiceRow(row) {
   const assignment = row.allocation === "contract" ? relationName(row.contracts) : row.allocation === "company" ? row.company_category : "Nieprzypisana";
@@ -603,8 +603,8 @@ function costRow(row) {
   return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(costCategoryLabel(row.category))}</td><td><strong>${escapeHtml(row.description || "—")}</strong></td><td>${escapeHtml(row.vendor || "—")}</td><td>${escapeHtml(row.document_number || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function detailSettlementRow(row) {
-  const controls = canManageContracts() ? `${row.status === "do_akceptacji" ? `<button class="table-action" type="button" data-action="approve-settlement" data-id="${row.id}">Akceptuj</button>` : ""}<button class="table-action" type="button" data-action="edit-settlement" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-settlement" data-id="${row.id}">Usuń</button>` : "";
-  return `<tr><td>${date(row.settlement_date)}</td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.status)}</td><td class="row-actions">${controls}</td></tr>`;
+  const controls = canManageContracts() ? `<button class="table-action" type="button" data-action="edit-settlement" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-settlement" data-id="${row.id}">Usuń</button>` : "";
+  return `<tr><td>${date(row.settlement_date)}</td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function detailInvoiceRow(row) {
   const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
@@ -719,7 +719,6 @@ function formDefinition(mode, record) {
       field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
       field("Numer / opis protokołu", input("reference_number", "text", record.reference_number)),
       field("Zakres / etap robót", input("budget_category", "text", record.budget_category || "pozostałe")),
-      field("Status", select("status", options([["robocze", "Roboczy"], ["do_akceptacji", "Do akceptacji"], ["zaakceptowane", "Zaakceptowany"], ["zafakturowane", "Archiwalny — zafakturowany"], ["oplacone", "Archiwalny — opłacony"]], record.status || "robocze"))),
     ].join("")
   };
   if (mode === "invoice") return {
@@ -877,7 +876,7 @@ function formPayload(mode, form) {
     if (!Number.isFinite(retentionPercent) || retentionPercent < 0 || retentionPercent > 100) throw new Error("Kaucja gwarancyjna musi mieścić się w zakresie 0–100%.");
     return { table: "contracts", payload: { name: value("name"), contract_number: value("contract_number"), client: value("client"), trade: value("trade"), description: value("description"), value_cents: number("value"), budget_cents: number("budget"), baseline_progress: Number(value("baseline_progress")), due_date: value("due_date") || null, retention_percent: retentionPercent, status: value("status") } };
   }
-  if (mode === "settlement") return { table: "settlements", payload: { contract_id: value("contract_id"), period: value("period"), settlement_date: value("settlement_date"), kind: "przerob", net_amount_cents: number("net_amount"), vat_rate: vat(), reference_number: value("reference_number"), budget_category: value("budget_category") || "pozostale", status: value("status") } };
+  if (mode === "settlement") return { table: "settlements", payload: { contract_id: value("contract_id"), period: value("period"), settlement_date: value("settlement_date"), kind: "przerob", net_amount_cents: number("net_amount"), vat_rate: vat(), reference_number: value("reference_number"), budget_category: value("budget_category") || "pozostale" } };
   if (mode === "invoice") {
     const allocation = value("allocation");
     const contractId = value("contract_id");
@@ -939,12 +938,6 @@ async function handleAction(element) {
     }
     if (action === "download-document") return await downloadDocument(id);
 
-    if (action === "approve-settlement") {
-      if (!canManageContracts()) throw new Error("Brak uprawnień do akceptacji protokołu.");
-      const { error } = await state.supabase.from("settlements").update({ status: "zaakceptowane", approved_at: new Date().toISOString(), approved_by: state.user.id }).eq("id", id);
-      if (error) throw error;
-      return await loadView(state.supabase);
-    }
     if (action === "approve-change" || action === "reject-change") {
       if (!canManageContracts()) throw new Error("Brak uprawnień do podjęcia decyzji.");
       const { error } = await state.supabase.from("contract_changes").update({
