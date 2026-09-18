@@ -13,7 +13,7 @@ const entryForm = document.querySelector("#entry-form");
 const viewMeta = {
   dashboard: { label: "Przegląd", icon: "▦" },
   contracts: { label: "Portfel kontraktów", icon: "▦" },
-  settlements: { label: "Rozliczenia", icon: "▤" },
+  settlements: { label: "Protokoły przerobowe", icon: "▤" },
   invoices: { label: "Faktury", icon: "▧" },
   costs: { label: "Koszty firmowe", icon: "▱" },
   alerts: { label: "Alerty i terminy", icon: "!" },
@@ -89,10 +89,10 @@ function renderAuth(supabase) {
           </div>
           <p class="auth-kicker">PANEL KONTRAKTÓW</p>
           <h1>Kontrakty<br />pod kontrolą.</h1>
-          <p class="auth-intro">Prowadź kontrakty elektryczne i teletechniczne. Rozliczenia, faktury oraz koszty firmowe są zawsze w jednym miejscu.</p>
+          <p class="auth-intro">Prowadź kontrakty elektryczne i teletechniczne. Protokoły przerobowe, faktury oraz koszty firmowe są zawsze w jednym miejscu.</p>
           <div class="auth-features">
             <p><b>✓</b> Kontroluj wartość, termin i postęp kontraktów</p>
-            <p><b>✓</b> Przypisuj rozliczenia i faktury do kontraktów</p>
+            <p><b>✓</b> Dokumentuj protokoły i przypisuj faktury do kontraktów</p>
             <p><b>✓</b> Prowadź koszty firmowe oraz cash flow</p>
           </div>
           <p class="auth-footer">ETW Group · wewnętrzny system prowadzenia kontraktów</p>
@@ -290,21 +290,20 @@ async function loadView(supabase) {
 }
 
 async function loadDashboardData(supabase) {
-  const [contracts, settlements, invoices, costs] = await Promise.all([
+  const [contracts, invoices, costs] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, client, trade, contract_number, value_cents, budget_cents, baseline_progress, due_date, status", "created_at", false),
-    selectRows(supabase, "settlements", "id, kind, net_amount_cents", "settlement_date", false),
     selectRows(supabase, "invoices", "id, invoice_type, net_amount_cents, allocation", "issue_date", false),
     selectRows(supabase, "company_costs", "id, net_amount_cents", "cost_date", false),
   ]);
   state.contracts = contracts;
-  state.settlements = settlements;
+  state.settlements = [];
   state.invoices = invoices;
   state.costs = costs;
 }
 
 async function loadSettlementData(supabase) {
   const [contracts, settlements] = await Promise.all([
-    selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
+    selectRows(supabase, "contracts", "id, name", "name", true),
     selectRows(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category, status, contracts(name)", "settlement_date", false),
   ]);
   state.contracts = contracts;
@@ -313,7 +312,7 @@ async function loadSettlementData(supabase) {
 
 async function loadInvoiceData(supabase) {
   const [contracts, invoices, importRuns] = await Promise.all([
-    selectRows(supabase, "contracts", "id, name", "name", true),
+    selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
     selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status, contracts(name)", "issue_date", false),
     canManageFinance() ? selectRows(supabase, "invoice_import_runs", "id, status, environment, imported_count, skipped_count, error_message, created_at, finished_at", "created_at", false) : Promise.resolve([]),
   ]);
@@ -349,19 +348,18 @@ async function loadContractDetailData(supabase) {
 }
 
 async function loadAlertData(supabase) {
-  const [contracts, settlements, invoices, schedule, changes] = await Promise.all([
+  const [contracts, invoices, schedule, changes] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, client, value_cents, budget_cents, due_date, status", "due_date", true),
-    selectRows(supabase, "settlements", "id, contract_id, kind, net_amount_cents, status", "settlement_date", false),
     selectRows(supabase, "invoices", "id, contract_id, invoice_type, document_number, counterparty, net_amount_cents, allocation, due_date, payment_status", "due_date", true),
     selectRows(supabase, "contract_schedule_items", "id, contract_id, title, end_date, progress, status", "end_date", true),
     selectRows(supabase, "contract_changes", "id, contract_id, kind, title, due_date, status", "due_date", true),
   ]);
   state.contracts = contracts;
-  state.settlements = settlements;
+  state.settlements = [];
   state.invoices = invoices;
   state.schedule = schedule;
   state.changes = changes;
-  state.alerts = collectAlerts({ contracts, settlements, invoices, schedule, changes });
+  state.alerts = collectAlerts({ contracts, invoices, schedule, changes });
 }
 
 async function selectRows(supabase, table, columns, orderColumn, ascending) {
@@ -391,15 +389,13 @@ async function loadContractHistory(supabase, contractId) {
 
 function renderDashboard() {
   const contractValue = sum(state.contracts, "value_cents");
-  const settlements = sum(state.settlements, "net_amount_cents");
-  const companyCosts = sum(state.costs, "net_amount_cents");
   const unassigned = state.invoices.filter((invoice) => invoice.allocation === "unassigned");
   return `
-    ${heading("PRĄDPLAN / PRZEGLĄD", "Portfel kontraktów", "Jedno miejsce do kontroli kontraktów, rozliczeń, faktur i kosztów firmowych.")}
+    ${heading("PRĄDPLAN / PRZEGLĄD", "Portfel kontraktów", "Jedno miejsce do kontroli kontraktów, faktur i kosztów firmowych.")}
     <section class="metric-grid">
       ${metric("Kontrakty aktywne", String(state.contracts.filter((row) => row.status !== "zakonczony").length), "Portfel bieżący", "yellow")}
       ${metric("Wartość kontraktów", money(contractValue), "Netto", "green")}
-      ${metric("Rozliczenia", money(settlements), "Wpisane pozycje", "blue")}
+      ${metric("Faktury sprzedażowe", money(sum(state.invoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "blue")}
       ${metric("Nieprzypisane FV", String(unassigned.length), money(sum(unassigned, "net_amount_cents")), "red")}
     </section>
     <section class="panel">
@@ -427,16 +423,16 @@ function renderContracts() {
 function renderSettlements() {
   const canAdd = canManageContracts();
   return `
-    ${heading("ETW GROUP / KONTRAKTY", "Rozliczenia", "Przerób, koszty, płatności i faktury przypisane bezpośrednio do kontraktu.", canAdd ? button("+ Dodaj rozliczenie", "settlement") : "")}
+    ${heading("ETW GROUP / KONTRAKTY", "Protokoły przerobowe", "Dokumentuj postęp robót. Protokoły nie wpływają na podsumowania finansowe kontraktów.", canAdd ? button("+ Dodaj protokół", "settlement") : "")}
     <section class="metric-grid">
-      ${metric("Pozycje", String(state.settlements.length), "Rejestr bieżący", "yellow")}
-      ${metric("Wartość rozliczeń", money(sum(state.settlements, "net_amount_cents")), "Netto", "green")}
+      ${metric("Protokoły", String(state.settlements.length), "Rejestr bieżący", "yellow")}
       ${metric("Do akceptacji", String(state.settlements.filter((row) => row.status === "do_akceptacji").length), "Wymagają decyzji", "red")}
+      ${metric("Zaakceptowane", String(state.settlements.filter((row) => row.status === "zaakceptowane").length), "Zamknięte protokoły", "green")}
       ${metric("Kontrakty", String(state.contracts.length), "Dostępne do wyboru", "blue")}
     </section>
     <section class="panel">
-      <div class="panel-head"><div><h2>Rejestr rozliczeń</h2><p>Każda pozycja ma przypisany kontrakt i wpływa na jego historię.</p></div></div>
-      ${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kontrakt</th><th>Rodzaj</th><th>Opis / nr</th><th>Kwota netto</th><th>Status</th></tr></thead><tbody>${state.settlements.map(settlementRow).join("")}</tbody></table></div>` : emptyState("Brak rozliczeń. Najpierw utwórz kontrakt, a potem dodaj pozycję.")}
+      <div class="panel-head"><div><h2>Rejestr protokołów przerobowych</h2><p>Każda pozycja dokumentuje wykonanie robót, ale nie zmienia wartości ani kosztów kontraktu.</p></div></div>
+      ${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kontrakt</th><th>Protokół</th><th>Opis / nr</th><th>Wartość informacyjna</th><th>Status</th></tr></thead><tbody>${state.settlements.map(settlementRow).join("")}</tbody></table></div>` : emptyState("Brak protokołów. Najpierw utwórz kontrakt, a potem dodaj protokół.")}
     </section>`;
 }
 
@@ -503,12 +499,10 @@ function renderAlerts() {
 
 function renderContractDetail() {
   const contract = state.contractDetail;
-  const settlementRevenue = sum(state.settlements.filter((row) => ["przerob", "faktura"].includes(row.kind)), "net_amount_cents");
   const invoiceRevenue = sum(state.invoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents");
-  const settlementCosts = sum(state.settlements.filter((row) => row.kind === "koszt"), "net_amount_cents");
   const invoiceCosts = sum(state.invoices.filter((row) => row.invoice_type === "purchase"), "net_amount_cents");
-  const revenue = settlementRevenue + invoiceRevenue;
-  const actualCosts = settlementCosts + invoiceCosts;
+  const revenue = invoiceRevenue;
+  const actualCosts = invoiceCosts;
   const approvedChanges = sum(state.changes.filter((row) => row.status === "zaakceptowane"), "net_amount_cents");
   const forecastValue = Number(contract.value_cents) + approvedChanges;
   const forecastMargin = forecastValue - Math.max(actualCosts, 0);
@@ -519,11 +513,11 @@ function renderContractDetail() {
   const scheduleDelayed = state.schedule.filter((row) => row.status === "opozniony").length;
   const editable = canManageContracts();
   return `
-    <div class="page-heading"><div class="heading-copy"><p class="eyebrow">KARTA KONTRAKTU / ${escapeHtml(contract.trade || "KONTRAKT")}</p><h1>${escapeHtml(contract.name)}</h1><p>${escapeHtml(contract.client || "Brak klienta")}${contract.contract_number ? ` · ${escapeHtml(contract.contract_number)}` : ""}</p></div><div class="page-actions"><button class="button button-secondary" type="button" data-view="contracts">← Portfel</button>${editable ? `<button class="button button-secondary" type="button" data-action="edit-contract">Edytuj</button><button class="button button-secondary button-danger" type="button" data-action="delete-contract">Usuń</button>${button("+ Zadanie", "schedule")} ${button("+ Rozliczenie", "settlement")} ${button("+ Zmiana", "change")} ${button("+ Dokument", "document")}` : ""}</div></div>
+    <div class="page-heading"><div class="heading-copy"><p class="eyebrow">KARTA KONTRAKTU / ${escapeHtml(contract.trade || "KONTRAKT")}</p><h1>${escapeHtml(contract.name)}</h1><p>${escapeHtml(contract.client || "Brak klienta")}${contract.contract_number ? ` · ${escapeHtml(contract.contract_number)}` : ""}</p></div><div class="page-actions"><button class="button button-secondary" type="button" data-view="contracts">← Portfel</button>${editable ? `<button class="button button-secondary" type="button" data-action="edit-contract">Edytuj</button><button class="button button-secondary button-danger" type="button" data-action="delete-contract">Usuń</button>${button("+ Zadanie", "schedule")} ${button("+ Protokół", "settlement")} ${button("+ Zmiana", "change")} ${button("+ Dokument", "document")}` : ""}</div></div>
     <section class="metric-grid">
       ${metric("Wartość kontraktu", money(forecastValue), approvedChanges ? `Zmiany: ${money(approvedChanges)}` : "Wartość umowna netto", "yellow")}
       ${metric("Wpisane koszty", money(actualCosts), `${Math.round((actualCosts / Math.max(Number(contract.budget_cents), 1)) * 100)}% budżetu`, actualCosts > Number(contract.budget_cents) ? "red" : "blue")}
-      ${metric("Przychody / przerób", money(revenue), "Pozycje w rejestrze", "green")}
+      ${metric("Faktury sprzedażowe", money(revenue), "Przychody z FV", "green")}
       ${metric("Marża prognozowana", money(forecastMargin), forecastMargin < 0 ? "Wymaga decyzji" : "Po kosztach wpisanych", forecastMargin < 0 ? "red" : "green")}
       ${metric("Pozostało do zafakturowania", money(remainingToInvoice), remainingToInvoice < 0 ? "Przekroczono wartość" : "Wg faktur sprzedażowych", remainingToInvoice < 0 ? "red" : "yellow")}
       ${metric("Kaucja pobrana", money(retentionCollected), retentionPercent ? `${percentLabel(retentionPercent)} z faktur sprzedażowych` : "Kaucja nieustawiona", retentionPercent ? "blue" : "yellow")}
@@ -532,7 +526,7 @@ function renderContractDetail() {
     ${isOwner() ? `<section class="panel contract-history"><div class="panel-head"><div><h2>Historia kontraktu</h2><p>Audyt zmian metadanych kontraktu — dostępny wyłącznie dla właściciela.</p></div></div>${state.history.length ? `<div class="history-list">${state.history.map(historyRow).join("")}</div>` : emptyState("Brak zarejestrowanych zmian kontraktu.")}</section>` : ""}
     <section class="panel schedule-panel"><div class="panel-head"><div><h2>Harmonogram kontraktu</h2><p>${state.schedule.length ? `${scheduleDone} z ${state.schedule.length} zadań zakończonych${scheduleDelayed ? ` · ${scheduleDelayed} opóźnionych` : ""}` : "Zadania, terminy i odpowiedzialność za realizację."}</p></div>${editable ? button("+ Dodaj zadanie", "schedule") : ""}</div>${state.schedule.length ? `<div class="table-wrap"><table><thead><tr><th>Zadanie</th><th>Termin</th><th>Odpowiedzialny</th><th>Postęp</th><th>Status</th><th></th></tr></thead><tbody>${state.schedule.map(scheduleRow).join("")}</tbody></table></div>${renderGantt(state.schedule)}` : emptyState("Brak zadań w harmonogramie. Dodaj pierwszy etap realizacji.")}</section>
     <section class="detail-grid">
-      <section class="panel"><div class="panel-head"><div><h2>Rozliczenia</h2><p>Pozycje przypisane do tego kontraktu.</p></div></div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Rodzaj</th><th>Opis</th><th>Netto</th><th>Status</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak rozliczeń.")}</section>
+      <section class="panel"><div class="panel-head"><div><h2>Protokoły przerobowe</h2><p>Dokumentacja postępu robót — bez wpływu na podsumowania finansowe.</p></div></div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Protokół</th><th>Opis</th><th>Wartość informacyjna</th><th>Status</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak protokołów przerobowych.")}</section>
       <section class="panel"><div class="panel-head"><div><h2>Faktury kontraktu</h2><p>Zakupowe oraz sprzedażowe przypisane do tego kontraktu. Kaucja: ${percentLabel(retentionPercent)}.</p></div>${canManageFinance() ? button("+ Faktura", "invoice") : ""}</div>${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Typ</th><th>Netto</th><th>Kaucja</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(detailInvoiceRow).join("")}</tbody></table></div>` : emptyState("Brak przypisanych faktur.")}</section>
     </section>
     <section class="detail-grid">
@@ -597,7 +591,7 @@ function reportContractRow(row) {
   return `<tr><td><button class="table-link" type="button" data-contract-id="${row.id}">${escapeHtml(row.name)}</button><small>${escapeHtml(row.client || "—")}</small></td><td class="money">${money(row.value_cents)}</td><td class="money">${money(row.budget_cents)}</td><td>${row.baseline_progress}%</td><td>${statusTag(row.status)}</td></tr>`;
 }
 function settlementRow(row) {
-  return `<tr><td>${date(row.settlement_date)}<small>okres: ${date(row.period)}</small></td><td><strong>${escapeHtml(relationName(row.contracts))}</strong></td><td>${escapeHtml(kindLabel(row.kind))}</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.status)}</td></tr>`;
+  return `<tr><td>${date(row.settlement_date)}<small>okres: ${date(row.period)}</small></td><td><strong>${escapeHtml(relationName(row.contracts))}</strong></td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.status)}</td></tr>`;
 }
 function invoiceRow(row) {
   const assignment = row.allocation === "contract" ? relationName(row.contracts) : row.allocation === "company" ? row.company_category : "Nieprzypisana";
@@ -610,7 +604,7 @@ function costRow(row) {
 }
 function detailSettlementRow(row) {
   const controls = canManageContracts() ? `${row.status === "do_akceptacji" ? `<button class="table-action" type="button" data-action="approve-settlement" data-id="${row.id}">Akceptuj</button>` : ""}<button class="table-action" type="button" data-action="edit-settlement" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-settlement" data-id="${row.id}">Usuń</button>` : "";
-  return `<tr><td>${date(row.settlement_date)}</td><td>${escapeHtml(kindLabel(row.kind))}</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.status)}</td><td class="row-actions">${controls}</td></tr>`;
+  return `<tr><td>${date(row.settlement_date)}</td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function detailInvoiceRow(row) {
   const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
@@ -717,16 +711,15 @@ function formDefinition(mode, record) {
     ].join("")
   };
   if (mode === "settlement") return {
-    eyebrow: record.id ? "EDYCJA ROZLICZENIA" : "ROZLICZENIE KONTRAKTU", title: record.id ? "Edytuj rozliczenie" : "Dodaj rozliczenie", fields: [
+    eyebrow: record.id ? "EDYCJA PROTOKOŁU" : "PROTOKÓŁ PRZEROBOWY", title: record.id ? "Edytuj protokół" : "Dodaj protokół", fields: [
       field("Kontrakt", select("contract_id", contractSelect, "required"), "full"),
       field("Okres", input("period", "date", record.period || firstDay, "required")),
-      field("Data rozliczenia", input("settlement_date", "date", record.settlement_date || today, "required")),
-      field("Rodzaj", select("kind", options([["przerob", "Przerób"], ["faktura", "Faktura"], ["koszt", "Koszt"], ["platnosc", "Płatność"], ["zaliczka", "Zaliczka"], ["korekta", "Korekta"]], record.kind || "przerob"))),
-      field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
+      field("Data protokołu", input("settlement_date", "date", record.settlement_date || today, "required")),
+      field("Wartość protokołu netto (zł; tylko informacyjnie)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
       field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
-      field("Numer / opis", input("reference_number", "text", record.reference_number)),
-      field("Kategoria budżetowa", input("budget_category", "text", record.budget_category || "pozostałe")),
-      field("Status", select("status", options([["robocze", "Robocze"], ["do_akceptacji", "Do akceptacji"], ["zafakturowane", "Zafakturowane"], ["oplacone", "Opłacone"]], record.status || "robocze"))),
+      field("Numer / opis protokołu", input("reference_number", "text", record.reference_number)),
+      field("Zakres / etap robót", input("budget_category", "text", record.budget_category || "pozostałe")),
+      field("Status", select("status", options([["robocze", "Roboczy"], ["do_akceptacji", "Do akceptacji"], ["zaakceptowane", "Zaakceptowany"], ["zafakturowane", "Archiwalny — zafakturowany"], ["oplacone", "Archiwalny — opłacony"]], record.status || "robocze"))),
     ].join("")
   };
   if (mode === "invoice") return {
@@ -884,7 +877,7 @@ function formPayload(mode, form) {
     if (!Number.isFinite(retentionPercent) || retentionPercent < 0 || retentionPercent > 100) throw new Error("Kaucja gwarancyjna musi mieścić się w zakresie 0–100%.");
     return { table: "contracts", payload: { name: value("name"), contract_number: value("contract_number"), client: value("client"), trade: value("trade"), description: value("description"), value_cents: number("value"), budget_cents: number("budget"), baseline_progress: Number(value("baseline_progress")), due_date: value("due_date") || null, retention_percent: retentionPercent, status: value("status") } };
   }
-  if (mode === "settlement") return { table: "settlements", payload: { contract_id: value("contract_id"), period: value("period"), settlement_date: value("settlement_date"), kind: value("kind"), net_amount_cents: number("net_amount"), vat_rate: vat(), reference_number: value("reference_number"), budget_category: value("budget_category") || "pozostale", status: value("status") } };
+  if (mode === "settlement") return { table: "settlements", payload: { contract_id: value("contract_id"), period: value("period"), settlement_date: value("settlement_date"), kind: "przerob", net_amount_cents: number("net_amount"), vat_rate: vat(), reference_number: value("reference_number"), budget_category: value("budget_category") || "pozostale", status: value("status") } };
   if (mode === "invoice") {
     const allocation = value("allocation");
     const contractId = value("contract_id");
@@ -947,8 +940,8 @@ async function handleAction(element) {
     if (action === "download-document") return await downloadDocument(id);
 
     if (action === "approve-settlement") {
-      if (!canManageContracts()) throw new Error("Brak uprawnień do akceptacji rozliczenia.");
-      const { error } = await state.supabase.from("settlements").update({ status: "zafakturowane", approved_at: new Date().toISOString(), approved_by: state.user.id }).eq("id", id);
+      if (!canManageContracts()) throw new Error("Brak uprawnień do akceptacji protokołu.");
+      const { error } = await state.supabase.from("settlements").update({ status: "zaakceptowane", approved_at: new Date().toISOString(), approved_by: state.user.id }).eq("id", id);
       if (error) throw error;
       return await loadView(state.supabase);
     }
@@ -964,7 +957,7 @@ async function handleAction(element) {
     }
 
     const deletion = {
-      "delete-settlement": ["settlements", "rozliczenie", canManageContracts()],
+      "delete-settlement": ["settlements", "protokół przerobowy", canManageContracts()],
       "delete-invoice": ["invoices", "fakturę", canManageFinance()],
       "delete-cost": ["company_costs", "koszt firmowy", canManageFinance()],
       "delete-change": ["contract_changes", "pozycję decyzji", canManageContracts()],
@@ -1007,7 +1000,7 @@ async function deleteContract() {
   if (!canManageContracts()) throw new Error("Brak uprawnień do usunięcia kontraktu.");
   const contract = state.contractDetail;
   if (!contract?.id) throw new Error("Nie wybrano kontraktu.");
-  const message = `Czy na pewno usunąć kontrakt „${contract.name}”? Usunięte zostaną jego rozliczenia, zmiany i dokumenty. Faktury pozostaną w rejestrze jako nieprzypisane.`;
+  const message = `Czy na pewno usunąć kontrakt „${contract.name}”? Usunięte zostaną jego protokoły przerobowe, zmiany i dokumenty. Faktury pozostaną w rejestrze jako nieprzypisane.`;
   if (!window.confirm(message)) return;
   if (state.documents.length) {
     const { error: storageError } = await state.supabase.storage.from("contract-documents").remove(state.documents.map((row) => row.storage_path));
@@ -1048,7 +1041,7 @@ function csvValue(value) {
   return /[;"\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-function collectAlerts({ contracts, settlements, invoices, schedule, changes }) {
+function collectAlerts({ contracts, invoices, schedule, changes }) {
   const alerts = [];
   const today = new Date().toISOString().slice(0, 10);
   const soon = addDays(today, 14);
@@ -1060,9 +1053,8 @@ function collectAlerts({ contracts, settlements, invoices, schedule, changes }) 
     if (contract.due_date && contract.due_date < today) add("critical", "Przekroczony termin kontraktu", `${contract.name} — termin umowny: ${date(contract.due_date)}.`, contract.id);
     else if (contract.due_date && contract.due_date <= soon) add("warning", "Zbliża się termin kontraktu", `${contract.name} — termin umowny: ${date(contract.due_date)}.`, contract.id);
 
-    const settlementCosts = sum(settlements.filter((row) => row.contract_id === contract.id && row.kind === "koszt"), "net_amount_cents");
     const invoiceCosts = sum(invoices.filter((row) => row.contract_id === contract.id && row.invoice_type === "purchase"), "net_amount_cents");
-    const costs = settlementCosts + invoiceCosts;
+    const costs = invoiceCosts;
     const budget = Number(contract.budget_cents || 0);
     if (budget > 0 && costs > budget) add("critical", "Przekroczony budżet kontraktu", `${contract.name} — koszty ${money(costs)} przy budżecie ${money(budget)}.`, contract.id);
     else if (budget > 0 && costs >= budget * 0.85) add("warning", "Budżet blisko limitu", `${contract.name} — wykorzystano ${Math.round((costs / budget) * 100)}% budżetu.`, contract.id);
