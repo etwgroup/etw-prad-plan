@@ -435,6 +435,7 @@ function renderInvoices() {
   const canAdd = canManageFinance();
   const unassigned = state.invoices.filter((row) => row.allocation === "unassigned");
   const recentRuns = state.importRuns.slice(0, 5);
+  const monthlyInvoices = groupRowsByMonth(state.invoices, "issue_date");
   return `
     ${heading("KSeF / REJESTR FAKTUR", "Faktury", "Faktury zakupowe i sprzedażowe. Każdą pozycję można przypisać do kontraktu lub kosztów firmy.", canAdd ? button("+ Dodaj fakturę", "invoice") : "")}
     <section class="metric-grid">
@@ -445,6 +446,7 @@ function renderInvoices() {
     </section>
     <section class="callout"><div class="callout-icon">⇩</div><div><h2>Import KSeF</h2><p>Import jest uruchamiany wyłącznie po stronie Supabase. Najpierw sprawdź konfigurację w środowisku testowym, a produkcję uruchamiaj po podłączeniu firmowego tokenu lub certyfikatu.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="import-ksef-test">Test KSeF</button><button class="button button-primary" type="button" data-action="import-ksef-production">Import produkcyjny</button></div>` : ""}</section>
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
+    <section class="panel monthly-panel"><div class="panel-head"><div><h2>Faktury według miesięcy</h2><p>Podział według daty wystawienia, w kwotach netto.</p></div></div>${monthlyInvoices.length ? `<div class="table-wrap"><table><thead><tr><th>Miesiąc</th><th>Faktury</th><th>Zakupowe</th><th>Sprzedażowe</th><th>Nieprzypisane</th></tr></thead><tbody>${monthlyInvoices.map(invoiceMonthRow).join("")}</tbody></table></div>` : emptyState("Brak faktur do zestawienia miesięcznego.")}</section>
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr faktur</h2><p>Dodaj ręcznie fakturę lub przypisz zaimportowaną pozycję do kontraktu.</p></div></div>
       ${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState("Brak faktur w rejestrze.")}
@@ -454,6 +456,7 @@ function renderInvoices() {
 function renderCosts() {
   const canAdd = canManageFinance();
   const categories = ["paliwo", "narzedzia", "ubior_bhp", "najem_lokali", "pozostale"];
+  const monthlyCosts = groupRowsByMonth(state.costs, "cost_date");
   return `
     ${heading("ETW GROUP / FINANSE", "Koszty firmowe", "Koszty ogólne niezwiązane z konkretnym kontraktem, podzielone na pięć kategorii firmowych.", canAdd ? button("+ Dodaj koszt", "cost") : "")}
     <section class="metric-grid">
@@ -463,6 +466,7 @@ function renderCosts() {
       ${metric("Opłacone", String(state.costs.filter((row) => row.payment_status === "oplacona").length), "Status płatności", "green")}
     </section>
     <section class="cost-breakdown" aria-label="Podział kosztów firmowych">${categories.map((category) => costCategoryCard(category, state.costs)).join("")}</section>
+    <section class="panel monthly-panel"><div class="panel-head"><div><h2>Koszty według miesięcy</h2><p>Podział według daty kosztu, w kwotach netto.</p></div></div>${monthlyCosts.length ? `<div class="table-wrap"><table><thead><tr><th>Miesiąc</th><th>Paliwo</th><th>Narzędzia</th><th>Ubiór BHP</th><th>Najem lokali</th><th>Pozostałe</th><th>Razem</th></tr></thead><tbody>${monthlyCosts.map(costMonthRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów do zestawienia miesięcznego.")}</section>
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr kosztów firmowych</h2><p>Pozycje nie są doliczane do budżetu pojedynczego kontraktu.</p></div></div>
       ${state.costs.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${state.costs.map(costRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów firmowych.")}
@@ -558,6 +562,16 @@ function emptyState(text) { return `<div class="empty">${text}</div>`; }
 function costCategoryCard(category, rows) {
   const matching = rows.filter((row) => normalizeCostCategory(row.category) === category);
   return `<article class="cost-category-card"><p>${escapeHtml(costCategoryLabel(category))}</p><strong>${money(sum(matching, "net_amount_cents"))}</strong><small>${matching.length} ${matching.length === 1 ? "pozycja" : "pozycje"}</small></article>`;
+}
+function invoiceMonthRow(group) {
+  const purchases = group.rows.filter((row) => row.invoice_type === "purchase");
+  const sales = group.rows.filter((row) => row.invoice_type === "sales");
+  const unassigned = group.rows.filter((row) => row.allocation === "unassigned");
+  return `<tr><td><strong>${escapeHtml(monthLabel(group.key))}</strong></td><td>${group.rows.length}</td><td class="money">${money(sum(purchases, "net_amount_cents"))}</td><td class="money">${money(sum(sales, "net_amount_cents"))}</td><td class="money">${money(sum(unassigned, "net_amount_cents"))}<small>${unassigned.length} pozycji</small></td></tr>`;
+}
+function costMonthRow(group) {
+  const categoryTotal = (category) => sum(group.rows.filter((row) => normalizeCostCategory(row.category) === category), "net_amount_cents");
+  return `<tr><td><strong>${escapeHtml(monthLabel(group.key))}</strong><small>${group.rows.length} pozycji</small></td><td class="money">${money(categoryTotal("paliwo"))}</td><td class="money">${money(categoryTotal("narzedzia"))}</td><td class="money">${money(categoryTotal("ubior_bhp"))}</td><td class="money">${money(categoryTotal("najem_lokali"))}</td><td class="money">${money(categoryTotal("pozostale"))}</td><td class="money">${money(sum(group.rows, "net_amount_cents"))}</td></tr>`;
 }
 
 function contractRow(row) {
@@ -1092,8 +1106,23 @@ function normalizeSupabaseUrl(value) {
   }
 }
 function sum(rows, field) { return rows.reduce((total, row) => total + Number(row[field] || 0), 0); }
+function groupRowsByMonth(rows, dateField) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = String(row[dateField] || "bez-daty").slice(0, 7);
+    const group = groups.get(key) || { key, rows: [] };
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((left, right) => right.key.localeCompare(left.key));
+}
 function normalizeCostCategory(category) { return ({ najem: "najem_lokali", administracja: "pozostale", inne: "pozostale" })[category] || category || "pozostale"; }
 function costCategoryLabel(category) { return ({ paliwo: "Paliwo", narzedzia: "Narzędzia", ubior_bhp: "Ubiór BHP", najem_lokali: "Najem lokali", pozostale: "Pozostałe" })[normalizeCostCategory(category)] || "Pozostałe"; }
+function monthLabel(key) {
+  if (!/^\d{4}-\d{2}$/.test(key)) return "Bez daty";
+  const [year, month] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("pl-PL", { month: "long", year: "numeric" }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
 function money(cents) { return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(cents || 0) / 100); }
 function date(value) { return value ? new Intl.DateTimeFormat("pl-PL").format(new Date(`${value}T12:00:00`)) : "—"; }
 function dateTime(value) { return value ? new Intl.DateTimeFormat("pl-PL", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—"; }
