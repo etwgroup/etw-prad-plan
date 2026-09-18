@@ -452,7 +452,7 @@ function renderInvoices() {
       ${metric("Sprzedażowe", money(sum(visibleInvoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "green")}
       ${metric("Do przypisania", money(sum(unassigned, "net_amount_cents")), `${unassigned.length} pozycji`, "yellow")}
     </section>
-    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Import KSeF</h2><p>Import jest uruchamiany wyłącznie po stronie Supabase. Najpierw sprawdź konfigurację w środowisku testowym, a produkcję uruchamiaj po podłączeniu firmowego tokenu lub certyfikatu.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="import-ksef-test">Test KSeF</button><button class="button button-primary" type="button" data-action="import-ksef-production">Import produkcyjny</button></div>` : ""}</section>
+    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Połączenie KSeF</h2><p>Test uwierzytelnienia działa wyłącznie po stronie Supabase, z certyfikatem DEMO. Nie pobiera ani nie zapisuje faktur. Import faktur zostanie włączony po udanej walidacji połączenia.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="test-ksef-demo">Test DEMO</button></div>` : ""}</section>
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr faktur — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Dodaj ręcznie fakturę lub przypisz zaimportowaną pozycję do kontraktu.</p></div></div>
@@ -624,7 +624,8 @@ function scheduleRow(row) {
 }
 function importRunRow(row) {
   const message = row.error_message || (row.status === "completed" ? "Import zakończony" : row.status === "queued" ? "Oczekuje na wykonanie" : "—");
-  return `<tr><td>${dateTime(row.created_at)}</td><td>${row.environment === "production" ? "Produkcja" : "Test"}</td><td>${importRunTag(row.status)}</td><td>${Number(row.imported_count || 0)}</td><td>${Number(row.skipped_count || 0)}</td><td><small>${escapeHtml(message)}</small></td></tr>`;
+  const environment = row.environment === "production" ? "Produkcja" : row.environment === "demo" ? "DEMO" : "Test";
+  return `<tr><td>${dateTime(row.created_at)}</td><td>${environment}</td><td>${importRunTag(row.status)}</td><td>${Number(row.imported_count || 0)}</td><td>${Number(row.skipped_count || 0)}</td><td><small>${escapeHtml(message)}</small></td></tr>`;
 }
 function alertRow(row) {
   const action = row.contractId
@@ -931,11 +932,7 @@ async function handleAction(element) {
     }
     if (action === "print-report") return window.print();
     if (action === "export-report") return exportReportCsv();
-    if (action === "import-ksef-test") return await requestKsefImport("test");
-    if (action === "import-ksef-production") {
-      if (!window.confirm("Uruchomić import KSeF dla środowiska produkcyjnego? Zostanie zarejestrowana próba importu po stronie Supabase.")) return;
-      return await requestKsefImport("production");
-    }
+    if (action === "test-ksef-demo") return await requestKsefImport("demo");
     if (action === "download-document") return await downloadDocument(id);
 
     if (action === "approve-change" || action === "reject-change") {
@@ -1007,7 +1004,7 @@ async function deleteContract() {
   await loadView(state.supabase);
 }
 
-async function requestKsefImport(environment = "test") {
+async function requestKsefImport(environment = "demo") {
   if (!canManageFinance()) throw new Error("Brak uprawnień do importu KSeF.");
   const { data, error } = await state.supabase.functions.invoke("import-ksef", { body: { environment } });
   if (error || data?.error) throw new Error(data?.error || error?.message || "Nie udało się uruchomić importu KSeF.");
