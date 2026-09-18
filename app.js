@@ -223,6 +223,13 @@ function renderShell(supabase) {
       if (action) await handleAction(action);
       if (event.target.closest("#logout-button")) await state.supabase.auth.signOut();
     });
+    app.addEventListener("change", async (event) => {
+      const picker = event.target.closest("[data-month-picker]");
+      if (!picker?.value) return;
+      const stateKey = picker.dataset.monthPicker === "invoice" ? "invoiceMonth" : "costMonth";
+      state[stateKey] = picker.value;
+      await loadView(state.supabase);
+    });
     state.shellEventsBound = true;
   }
 }
@@ -569,12 +576,10 @@ function costCategoryCard(category, rows) {
   const matching = rows.filter((row) => normalizeCostCategory(row.category) === category);
   return `<article class="cost-category-card"><p>${escapeHtml(costCategoryLabel(category))}</p><strong>${money(sum(matching, "net_amount_cents"))}</strong><small>${matching.length} ${matching.length === 1 ? "pozycja" : "pozycje"}</small></article>`;
 }
-function monthNavigator(kind, activeMonth, groups, noun) {
-  if (!groups.length || !activeMonth) return `<section class="month-navigator empty">Brak zapisanych ${noun} do wyświetlenia.</section>`;
-  const activeIndex = groups.findIndex((group) => group.key === activeMonth);
-  const newer = groups[activeIndex - 1];
-  const older = groups[activeIndex + 1];
-  return `<section class="month-navigator"><button class="month-button" type="button" data-action="${kind}-month-previous" ${older ? "" : "disabled"} aria-label="Poprzedni miesiąc">←</button><div><p>WYBRANY MIESIĄC</p><strong>${escapeHtml(monthLabel(activeMonth))}</strong></div><button class="month-button" type="button" data-action="${kind}-month-next" ${newer ? "" : "disabled"} aria-label="Następny miesiąc">→</button></section>`;
+function monthNavigator(kind, activeMonth, _groups, noun) {
+  const selected = activeMonth || currentMonthKey();
+  const hasNewerMonth = selected < currentMonthKey();
+  return `<section class="month-navigator" aria-label="Nawigacja miesięczna ${escapeHtml(noun)}"><button class="month-button" type="button" data-action="${kind}-month-previous" aria-label="Poprzedni miesiąc">←</button><div><p>WYBRANY MIESIĄC</p><input class="month-picker" type="month" data-month-picker="${kind}" value="${selected}" max="${currentMonthKey()}" aria-label="Wybierz miesiąc" /><small>${escapeHtml(noun)} w wybranym okresie</small></div><button class="month-button" type="button" data-action="${kind}-month-next" ${hasNewerMonth ? "" : "disabled"} aria-label="Następny miesiąc">→</button></section>`;
 }
 
 function contractRow(row) {
@@ -896,12 +901,10 @@ async function handleAction(element) {
   try {
     if (["invoice-month-previous", "invoice-month-next", "cost-month-previous", "cost-month-next"].includes(action)) {
       const isInvoice = action.startsWith("invoice-");
-      const groups = groupRowsByMonth(isInvoice ? state.invoices : state.costs, isInvoice ? "issue_date" : "cost_date");
       const stateKey = isInvoice ? "invoiceMonth" : "costMonth";
-      const direction = action.endsWith("previous") ? 1 : -1;
-      const currentIndex = groups.findIndex((group) => group.key === state[stateKey]);
-      const nextGroup = groups[currentIndex + direction];
-      if (nextGroup) state[stateKey] = nextGroup.key;
+      const direction = action.endsWith("previous") ? -1 : 1;
+      const nextMonth = shiftMonth(state[stateKey] || currentMonthKey(), direction);
+      if (nextMonth <= currentMonthKey()) state[stateKey] = nextMonth;
       return await loadView(state.supabase);
     }
     if (action === "edit-contract") return openEntryModal("contract", state.contractDetail);
@@ -1131,12 +1134,14 @@ function groupRowsByMonth(rows, dateField) {
   return [...groups.values()].sort((left, right) => right.key.localeCompare(left.key));
 }
 function selectedMonthKey(stateKey, groups) {
-  if (!groups.length) {
-    state[stateKey] = "";
-    return "";
-  }
-  if (!groups.some((group) => group.key === state[stateKey])) state[stateKey] = groups[0].key;
+  if (!state[stateKey]) state[stateKey] = groups[0]?.key || currentMonthKey();
   return state[stateKey];
+}
+function currentMonthKey() { return new Date().toISOString().slice(0, 7); }
+function shiftMonth(key, direction) {
+  const [year, month] = key.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1 + direction, 1));
+  return date.toISOString().slice(0, 7);
 }
 function normalizeCostCategory(category) { return ({ najem: "najem_lokali", administracja: "pozostale", inne: "pozostale" })[category] || category || "pozostale"; }
 function costCategoryLabel(category) { return ({ paliwo: "Paliwo", narzedzia: "Narzędzia", ubior_bhp: "Ubiór BHP", najem_lokali: "Najem lokali", pozostale: "Pozostałe" })[normalizeCostCategory(category)] || "Pozostałe"; }
