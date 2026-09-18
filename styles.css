@@ -129,6 +129,13 @@ html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
 .cost-category-card strong { display: block; margin: 12px 0 5px; font-size: 20px; letter-spacing: -.04em; white-space: nowrap; }
 .cost-category-card small { color: var(--ink-soft); font-size: 12px; }
 .monthly-panel { margin-bottom: 30px; }
+.month-navigator { display: grid; grid-template-columns: 58px minmax(0, 1fr) 58px; align-items: center; max-width: 560px; margin: -8px 0 30px; border: 1px solid var(--line); background: var(--white); text-align: center; }
+.month-navigator > div { padding: 13px 16px; border-right: 1px solid var(--line); border-left: 1px solid var(--line); }
+.month-navigator p { margin: 0 0 4px; color: var(--ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .11em; }
+.month-navigator strong { font-size: 18px; letter-spacing: -.03em; text-transform: capitalize; }
+.month-button { height: 100%; min-height: 60px; border: 0; color: var(--ink); background: var(--white); font-size: 25px; line-height: 1; }
+.month-button:hover:not(:disabled) { background: var(--yellow); }
+.month-button:disabled { cursor: not-allowed; color: #c5c6c5; }
 
 .panel { border: 1px solid var(--line); background: var(--white); }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 24px 27px; border-bottom: 1px solid var(--line); }
@@ -274,6 +281,7 @@ html body #app .auth-screen {
   .page-actions { justify-content: flex-start; margin-top: 20px; }
   .metric-grid { grid-template-columns: 1fr; }
   .cost-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .month-navigator { max-width: none; margin-bottom: 24px; }
   .heading-copy h1 { font-size: 37px; }
   .callout { align-items: flex-start; }
   .callout { flex-wrap: wrap; }
