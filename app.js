@@ -304,7 +304,7 @@ async function loadDashboardData(supabase) {
 
 async function loadSettlementData(supabase) {
   const [contracts, settlements] = await Promise.all([
-    selectRows(supabase, "contracts", "id, name", "name", true),
+    selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
     selectRows(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category, status, contracts(name)", "settlement_date", false),
   ]);
   state.contracts = contracts;
@@ -327,7 +327,7 @@ async function loadContractDetailData(supabase) {
   if (!contractId) throw new Error("Nie wybrano kontraktu.");
   const { data: contract, error: contractError } = await supabase
     .from("contracts")
-    .select("id, name, client, trade, contract_number, description, value_cents, budget_cents, baseline_progress, due_date, status, manager_id")
+    .select("id, name, client, trade, contract_number, description, value_cents, budget_cents, baseline_progress, due_date, status, manager_id, retention_percent")
     .eq("id", contractId)
     .single();
   if (contractError) throw contractError;
@@ -512,6 +512,9 @@ function renderContractDetail() {
   const approvedChanges = sum(state.changes.filter((row) => row.status === "zaakceptowane"), "net_amount_cents");
   const forecastValue = Number(contract.value_cents) + approvedChanges;
   const forecastMargin = forecastValue - Math.max(actualCosts, 0);
+  const remainingToInvoice = forecastValue - invoiceRevenue;
+  const retentionPercent = Number(contract.retention_percent || 0);
+  const retentionCollected = sum(state.invoices.filter((row) => row.invoice_type === "sales").map((row) => ({ amount: retentionAmount(row.net_amount_cents, retentionPercent) })), "amount");
   const scheduleDone = state.schedule.filter((row) => row.status === "zakonczony").length;
   const scheduleDelayed = state.schedule.filter((row) => row.status === "opozniony").length;
   const editable = canManageContracts();
@@ -522,13 +525,15 @@ function renderContractDetail() {
       ${metric("Wpisane koszty", money(actualCosts), `${Math.round((actualCosts / Math.max(Number(contract.budget_cents), 1)) * 100)}% budżetu`, actualCosts > Number(contract.budget_cents) ? "red" : "blue")}
       ${metric("Przychody / przerób", money(revenue), "Pozycje w rejestrze", "green")}
       ${metric("Marża prognozowana", money(forecastMargin), forecastMargin < 0 ? "Wymaga decyzji" : "Po kosztach wpisanych", forecastMargin < 0 ? "red" : "green")}
+      ${metric("Pozostało do zafakturowania", money(remainingToInvoice), remainingToInvoice < 0 ? "Przekroczono wartość" : "Wg faktur sprzedażowych", remainingToInvoice < 0 ? "red" : "yellow")}
+      ${metric("Kaucja pobrana", money(retentionCollected), retentionPercent ? `${percentLabel(retentionPercent)} z faktur sprzedażowych` : "Kaucja nieustawiona", retentionPercent ? "blue" : "yellow")}
     </section>
     <section class="contract-summary panel"><div><p class="eyebrow">STATUS REALIZACJI</p><h2>${statusTag(contract.status)}</h2><p>${escapeHtml(contract.description || "Brak dodatkowego opisu kontraktu.")}</p></div><div class="contract-progress"><strong>${contract.baseline_progress}%</strong><div class="progress"><span style="width:${clampProgress(contract.baseline_progress)}%"></span></div><small>Termin umowny: ${date(contract.due_date)}</small></div></section>
     ${isOwner() ? `<section class="panel contract-history"><div class="panel-head"><div><h2>Historia kontraktu</h2><p>Audyt zmian metadanych kontraktu — dostępny wyłącznie dla właściciela.</p></div></div>${state.history.length ? `<div class="history-list">${state.history.map(historyRow).join("")}</div>` : emptyState("Brak zarejestrowanych zmian kontraktu.")}</section>` : ""}
     <section class="panel schedule-panel"><div class="panel-head"><div><h2>Harmonogram kontraktu</h2><p>${state.schedule.length ? `${scheduleDone} z ${state.schedule.length} zadań zakończonych${scheduleDelayed ? ` · ${scheduleDelayed} opóźnionych` : ""}` : "Zadania, terminy i odpowiedzialność za realizację."}</p></div>${editable ? button("+ Dodaj zadanie", "schedule") : ""}</div>${state.schedule.length ? `<div class="table-wrap"><table><thead><tr><th>Zadanie</th><th>Termin</th><th>Odpowiedzialny</th><th>Postęp</th><th>Status</th><th></th></tr></thead><tbody>${state.schedule.map(scheduleRow).join("")}</tbody></table></div>${renderGantt(state.schedule)}` : emptyState("Brak zadań w harmonogramie. Dodaj pierwszy etap realizacji.")}</section>
     <section class="detail-grid">
       <section class="panel"><div class="panel-head"><div><h2>Rozliczenia</h2><p>Pozycje przypisane do tego kontraktu.</p></div></div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Rodzaj</th><th>Opis</th><th>Netto</th><th>Status</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak rozliczeń.")}</section>
-      <section class="panel"><div class="panel-head"><div><h2>Faktury kontraktu</h2><p>Zakupowe oraz sprzedażowe przypisane do tego kontraktu.</p></div>${canManageFinance() ? button("+ Faktura", "invoice") : ""}</div>${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Typ</th><th>Netto</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(detailInvoiceRow).join("")}</tbody></table></div>` : emptyState("Brak przypisanych faktur.")}</section>
+      <section class="panel"><div class="panel-head"><div><h2>Faktury kontraktu</h2><p>Zakupowe oraz sprzedażowe przypisane do tego kontraktu. Kaucja: ${percentLabel(retentionPercent)}.</p></div>${canManageFinance() ? button("+ Faktura", "invoice") : ""}</div>${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Typ</th><th>Netto</th><th>Kaucja</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(detailInvoiceRow).join("")}</tbody></table></div>` : emptyState("Brak przypisanych faktur.")}</section>
     </section>
     <section class="detail-grid">
       <section class="panel"><div class="panel-head"><div><h2>Zmiany, roszczenia i ryzyka</h2><p>Rejestr decyzji wpływających na kontrakt.</p></div>${editable ? button("+ Dodaj pozycję", "change") : ""}</div>${state.changes.length ? `<div class="table-wrap"><table><thead><tr><th>Rodzaj</th><th>Pozycja</th><th>Wpływ netto</th><th>Termin</th><th>Status</th><th></th></tr></thead><tbody>${state.changes.map(changeRow).join("")}</tbody></table></div>` : emptyState("Brak zmian i roszczeń.")}</section>
@@ -609,7 +614,8 @@ function detailSettlementRow(row) {
 }
 function detailInvoiceRow(row) {
   const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
-  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  const retention = row.invoice_type === "sales" ? retentionAmount(row.net_amount_cents, state.contractDetail?.retention_percent) : 0;
+  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${row.invoice_type === "sales" ? money(retention) : "—"}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function changeRow(row) {
   const controls = canManageContracts() ? `${row.status === "otwarte" ? `<button class="table-action" type="button" data-action="approve-change" data-id="${row.id}">Akceptuj</button><button class="table-action danger" type="button" data-action="reject-change" data-id="${row.id}">Odrzuć</button>` : ""}<button class="table-action" type="button" data-action="edit-change" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-change" data-id="${row.id}">Usuń</button>` : "";
@@ -705,6 +711,7 @@ function formDefinition(mode, record) {
       field("Budżet kosztów netto (zł)", moneyInput("budget", record.id ? moneyValue(record.budget_cents) : "")),
       field("Zaawansowanie bazowe (%)", input("baseline_progress", "number", record.id ? record.baseline_progress : 0, "min=\"0\" max=\"100\" required")),
       field("Termin umowny", input("due_date", "date", record.due_date)),
+      field("Kaucja gwarancyjna (%)", input("retention_percent", "number", record.id ? record.retention_percent ?? 0 : 0, "min=\"0\" max=\"100\" step=\"0.01\" required")),
       field("Status", select("status", options([["w_realizacji", "W realizacji"], ["do_decyzji", "Do decyzji"], ["ryzyko", "Ryzyko"], ["zakonczony", "Zakończony"]], record.status || "w_realizacji"))),
       field("Opis / zakres", `<textarea name="description" placeholder="Zakres prac, ważne ustalenia…">${escapeHtml(record.description || "")}</textarea>`, "full"),
     ].join("")
@@ -872,7 +879,11 @@ function formPayload(mode, form) {
   const value = (key) => String(form.get(key) || "").trim();
   const number = (key) => toCents(value(key));
   const vat = () => Number(value("vat_rate") || 0);
-  if (mode === "contract") return { table: "contracts", payload: { name: value("name"), contract_number: value("contract_number"), client: value("client"), trade: value("trade"), description: value("description"), value_cents: number("value"), budget_cents: number("budget"), baseline_progress: Number(value("baseline_progress")), due_date: value("due_date") || null, status: value("status") } };
+  if (mode === "contract") {
+    const retentionPercent = Number(value("retention_percent"));
+    if (!Number.isFinite(retentionPercent) || retentionPercent < 0 || retentionPercent > 100) throw new Error("Kaucja gwarancyjna musi mieścić się w zakresie 0–100%.");
+    return { table: "contracts", payload: { name: value("name"), contract_number: value("contract_number"), client: value("client"), trade: value("trade"), description: value("description"), value_cents: number("value"), budget_cents: number("budget"), baseline_progress: Number(value("baseline_progress")), due_date: value("due_date") || null, retention_percent: retentionPercent, status: value("status") } };
+  }
   if (mode === "settlement") return { table: "settlements", payload: { contract_id: value("contract_id"), period: value("period"), settlement_date: value("settlement_date"), kind: value("kind"), net_amount_cents: number("net_amount"), vat_rate: vat(), reference_number: value("reference_number"), budget_category: value("budget_category") || "pozostale", status: value("status") } };
   if (mode === "invoice") {
     const allocation = value("allocation");
@@ -1145,6 +1156,8 @@ function shiftMonth(key, direction) {
 }
 function normalizeCostCategory(category) { return ({ najem: "najem_lokali", administracja: "pozostale", inne: "pozostale" })[category] || category || "pozostale"; }
 function costCategoryLabel(category) { return ({ paliwo: "Paliwo", narzedzia: "Narzędzia", ubior_bhp: "Ubiór BHP", najem_lokali: "Najem lokali", pozostale: "Pozostałe" })[normalizeCostCategory(category)] || "Pozostałe"; }
+function retentionAmount(cents, percent) { return Math.round(Number(cents || 0) * (Number(percent || 0) / 100)); }
+function percentLabel(percent) { return `${new Intl.NumberFormat("pl-PL", { maximumFractionDigits: 2 }).format(Number(percent || 0))}%`; }
 function monthLabel(key) {
   if (!/^\d{4}-\d{2}$/.test(key)) return "Bez daty";
   const [year, month] = key.split("-").map(Number);
