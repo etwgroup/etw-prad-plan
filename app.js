@@ -1194,8 +1194,8 @@ function renderKsefInvoiceVisualization(invoice) {
     invoice?.payment?.account ? `Rachunek: <strong>${escapeHtml(String(invoice.payment.account))}</strong>` : "",
   ].filter(Boolean).join("<br />");
   const itemRows = rows.length
-    ? rows.map((row) => `<tr><td>${escapeHtml(String(row?.name || "Pozycja faktury"))}</td><td>${escapeHtml(String(row?.vatRate || "—"))}</td><td class="align-right">${ksefPreviewMoney(row?.netAmount, currency)}</td></tr>`).join("")
-    : `<tr><td class="invoice-preview-empty" colspan="3">W XML tej faktury nie ma pozycji do pokazania.</td></tr>`;
+    ? rows.map((row) => `<tr><td>${escapeHtml(String(row?.name || "Pozycja faktury"))}</td><td>${escapeHtml(vatRateLabel(row?.vatRate))}</td><td class="align-right">${ksefPreviewMoney(row?.netAmount, currency)}</td><td class="align-right">${ksefPreviewMoney(row?.vatAmount, currency)}</td><td class="align-right">${ksefPreviewMoney(row?.grossAmount, currency)}</td></tr>`).join("")
+    : `<tr><td class="invoice-preview-empty" colspan="5">W XML tej faktury nie ma pozycji do pokazania.</td></tr>`;
 
   return `<article class="invoice-preview-paper">
     <header class="invoice-preview-paper-header">
@@ -1205,12 +1205,14 @@ function renderKsefInvoiceVisualization(invoice) {
     <div class="invoice-preview-party-grid">
       ${invoicePreviewParty("Sprzedawca", invoice?.seller)}
       ${invoicePreviewParty("Nabywca", invoice?.buyer)}
+      ${invoicePreviewParty("Odbiorca", invoice?.recipient)}
     </div>
-    <div class="invoice-preview-table-wrap"><table class="invoice-preview-table"><thead><tr><th>Pozycja</th><th>VAT</th><th class="align-right">Wartość netto</th></tr></thead><tbody>${itemRows}</tbody></table></div>
+    <div class="invoice-preview-table-wrap"><table class="invoice-preview-table"><thead><tr><th>Pozycja</th><th>VAT</th><th class="align-right">Netto</th><th class="align-right">Podatek VAT</th><th class="align-right">Brutto</th></tr></thead><tbody>${itemRows}</tbody></table></div>
     <footer class="invoice-preview-footer">
       <div class="invoice-preview-payment"><h4>Płatność</h4>${paymentDetails}</div>
       <div class="invoice-preview-totals">
         <div class="invoice-preview-total"><span>Razem netto</span><strong>${ksefPreviewMoney(invoice?.totals?.netAmount, currency)}</strong></div>
+        <div class="invoice-preview-total"><span>Razem podatek VAT</span><strong>${ksefPreviewMoney(invoice?.totals?.vatAmount, currency)}</strong></div>
         <div class="invoice-preview-total invoice-preview-total-grand"><span>Do zapłaty</span><strong>${ksefPreviewMoney(invoice?.totals?.grossAmount, currency)}</strong></div>
       </div>
     </footer>
@@ -1229,6 +1231,11 @@ function ksefPreviewMoney(value, currency = "PLN") {
   } catch {
     return `${amount.toFixed(2)} ${escapeHtml(currency)}`;
   }
+}
+
+function vatRateLabel(value) {
+  const rate = String(value || "").trim();
+  return /^\d+(?:[.,]\d+)?$/.test(rate) ? `${rate}%` : rate || "—";
 }
 
 function setImportProgress(message, visible) {

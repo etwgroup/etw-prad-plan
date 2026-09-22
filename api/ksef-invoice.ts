@@ -131,17 +131,16 @@ function xmlTextFromResult(value: unknown, depth = 0): string {
 function visualizationFromXml(xml: string, ksefNumber: string) {
   const invoice = firstTagContent(xml, "Fa") || xml;
   const payment = firstTagContent(invoice, "Platnosc");
-  const seller = firstTagContent(invoice, "Podmiot1");
-  const buyer = firstTagContent(invoice, "Podmiot2");
-  const items = tagContents(invoice, "FaWiersz").map((row) => ({
-    name: firstTagText(row, "P_7") || "Pozycja faktury",
-    quantity: firstTagText(row, "P_8B") || firstTagText(row, "P_8A") || "",
-    unit: firstTagText(row, "P_8A") || "",
-    netAmount: toNumber(firstTagText(row, "P_11")),
-    vatRate: firstTagText(row, "P_12") || "",
-  }));
+  // Podmioty znajdują się bezpośrednio w Faktura, obok bloku Fa z pozycjami.
+  const seller = firstTagContent(xml, "Podmiot1");
+  const buyer = firstTagContent(xml, "Podmiot2");
+  const recipient = firstTagContent(xml, "Podmiot3");
+  const items = tagContents(invoice, "FaWiersz").map((row) => invoiceItemFromXml(row));
   const itemsNet = items.reduce((total, item) => total + (item.netAmount || 0), 0);
   const declaredNet = totalFromTags(invoice, "P_13");
+  const grossAmount = toNumber(firstTagText(invoice, "P_15"));
+  const netAmount = declaredNet ?? (items.length ? itemsNet : null);
+  const declaredVat = totalFromTags(invoice, "P_14");
 
   return {
     ksefNumber,
@@ -152,15 +151,33 @@ function visualizationFromXml(xml: string, ksefNumber: string) {
     kind: firstTagText(invoice, "RodzajFaktury") || "Faktura VAT",
     seller: partyFromXml(seller),
     buyer: partyFromXml(buyer),
+    recipient: partyFromXml(recipient),
     payment: {
       form: firstTagText(payment, "FormaPlatnosci"),
       account: firstTagText(payment, "NrRB"),
     },
     items,
     totals: {
-      netAmount: declaredNet ?? (items.length ? itemsNet : null),
-      grossAmount: toNumber(firstTagText(invoice, "P_15")),
+      netAmount,
+      vatAmount: declaredVat ?? (netAmount !== null && grossAmount !== null ? roundMoney(grossAmount - netAmount) : null),
+      grossAmount,
     },
+  };
+}
+
+function invoiceItemFromXml(xml: string) {
+  const netAmount = toNumber(firstTagText(xml, "P_11"));
+  const vatRate = firstTagText(xml, "P_12") || "";
+  const rate = toNumber(vatRate);
+  const vatAmount = netAmount !== null && rate !== null ? roundMoney(netAmount * rate / 100) : null;
+  return {
+    name: firstTagText(xml, "P_7") || "Pozycja faktury",
+    quantity: firstTagText(xml, "P_8B") || firstTagText(xml, "P_8A") || "",
+    unit: firstTagText(xml, "P_8A") || "",
+    netAmount,
+    vatRate,
+    vatAmount,
+    grossAmount: netAmount !== null && vatAmount !== null ? roundMoney(netAmount + vatAmount) : null,
   };
 }
 
@@ -202,6 +219,10 @@ function totalFromTags(xml: string, prefix: string) {
 function toNumber(value: string) {
   const parsed = Number(value.replace(/\s/g, "").replace(",", "."));
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 function dateOnly(value: string) {
