@@ -173,8 +173,10 @@ function invoiceItemFromXml(xml: string) {
   const vatAmount = netAmount !== null && rate !== null ? roundMoney(netAmount * rate / 100) : null;
   return {
     name: firstTagText(xml, "P_7") || "Pozycja faktury",
-    quantity: firstTagText(xml, "P_8B") || firstTagText(xml, "P_8A") || "",
-    unit: firstTagText(xml, "P_8A") || "",
+    // W strukturze FA P_8A oznacza ilość, a P_8B jednostkę miary.
+    // Dodatkowe nazwy są bezpiecznym fallbackiem dla wariantów XML.
+    quantity: firstTagText(xml, "P_8A") || firstTagText(xml, "Ilosc") || firstTagText(xml, "IloscTowaru") || "",
+    unit: firstTagText(xml, "P_8B") || firstTagText(xml, "JednostkaMiary") || firstTagText(xml, "Miara") || "",
     netAmount,
     vatRate,
     vatAmount,

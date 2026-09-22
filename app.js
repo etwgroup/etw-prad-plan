@@ -1545,8 +1545,8 @@ function renderKsefInvoiceVisualization(invoice) {
     invoice?.payment?.account ? `Rachunek: <strong>${escapeHtml(String(invoice.payment.account))}</strong>` : "",
   ].filter(Boolean).join("<br />");
   const itemRows = rows.length
-    ? rows.map((row) => `<tr><td>${escapeHtml(String(row?.name || "Pozycja faktury"))}</td><td>${escapeHtml(vatRateLabel(row?.vatRate))}</td><td class="align-right">${ksefPreviewMoney(row?.netAmount, currency)}</td><td class="align-right">${ksefPreviewMoney(row?.vatAmount, currency)}</td><td class="align-right">${ksefPreviewMoney(row?.grossAmount, currency)}</td></tr>`).join("")
-    : `<tr><td class="invoice-preview-empty" colspan="5">W XML tej faktury nie ma pozycji do pokazania.</td></tr>`;
+    ? rows.map((row) => `<tr><td>${escapeHtml(String(row?.name || "Pozycja faktury"))}</td><td class="align-right">${escapeHtml(String(row?.quantity || "—"))}</td><td>${escapeHtml(String(row?.unit || "—"))}</td><td>${escapeHtml(vatRateLabel(row?.vatRate))}</td><td class="align-right">${ksefPreviewMoney(row?.netAmount, currency)}</td><td class="align-right">${ksefPreviewMoney(row?.vatAmount, currency)}</td><td class="align-right">${ksefPreviewMoney(row?.grossAmount, currency)}</td></tr>`).join("")
+    : `<tr><td class="invoice-preview-empty" colspan="7">W XML tej faktury nie ma pozycji do pokazania.</td></tr>`;
 
   return `<article class="invoice-preview-paper">
     <header class="invoice-preview-paper-header">
@@ -1558,7 +1558,7 @@ function renderKsefInvoiceVisualization(invoice) {
       ${invoicePreviewParty("Nabywca", invoice?.buyer)}
       ${invoicePreviewParty("Odbiorca", invoice?.recipient)}
     </div>
-    <div class="invoice-preview-table-wrap"><table class="invoice-preview-table"><thead><tr><th>Pozycja</th><th>VAT</th><th class="align-right">Netto</th><th class="align-right">Podatek VAT</th><th class="align-right">Brutto</th></tr></thead><tbody>${itemRows}</tbody></table></div>
+    <div class="invoice-preview-table-wrap"><table class="invoice-preview-table"><thead><tr><th>Pozycja</th><th class="align-right">Ilość</th><th>Jednostka</th><th>VAT</th><th class="align-right">Netto</th><th class="align-right">Podatek VAT</th><th class="align-right">Brutto</th></tr></thead><tbody>${itemRows}</tbody></table></div>
     <footer class="invoice-preview-footer">
       <div class="invoice-preview-payment"><h4>Płatność</h4>${paymentDetails}</div>
       <div class="invoice-preview-totals">
