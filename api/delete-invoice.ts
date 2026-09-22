@@ -71,14 +71,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const adminClient = createClient(projectUrl, serviceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const { data: deleted, error: deleteError } = await adminClient
+    const { error: deleteError } = await adminClient
       .from("invoices")
       .delete()
-      .eq("id", invoiceId)
-      .select("id")
-      .maybeSingle();
+      .eq("id", invoiceId);
     if (deleteError) throw deleteError;
-    if (!deleted) return response.status(404).json({ error: "Nie znaleziono faktury do usunięcia." });
 
     return response.status(200).json({ message: "Faktura została usunięta." });
   } catch (error) {
