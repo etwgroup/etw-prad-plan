@@ -1006,8 +1006,18 @@ async function deleteContract() {
 
 async function requestKsefImport(environment = "demo") {
   if (!canManageFinance()) throw new Error("Brak uprawnień do importu KSeF.");
-  const { data, error } = await state.supabase.functions.invoke("import-ksef", { body: { environment } });
-  if (error || data?.error) throw new Error(data?.error || error?.message || "Nie udało się uruchomić importu KSeF.");
+  const { data: { session } } = await state.supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
+  const response = await fetch("/api/ksef-test", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ environment }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się uruchomić testu KSeF.");
   window.alert(data?.message || "Zlecono sprawdzenie połączenia KSeF.");
   await loadView(state.supabase);
 }
