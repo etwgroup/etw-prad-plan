@@ -236,11 +236,12 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
 async function downloadInvoiceXml(client: KSeFClient, ksefNumber: string) {
   // Dokument pobiera i odszyfrowuje wyłącznie serwer. Rzutowanie zachowuje
   // zgodność z deklaracjami wersji 0.13 klienta KSeF użytej w tym projekcie.
-  const invoices = client.invoices as unknown as { getInvoice: (number: string) => Promise<string> };
+  const invoices = client.invoices as unknown as { getInvoice: (number: string) => Promise<string | Uint8Array> };
   if (typeof invoices.getInvoice !== "function") {
     throw new Error("Zainstalowana wersja klienta KSeF nie obsługuje pobierania XML faktury.");
   }
-  return invoices.getInvoice(ksefNumber);
+  const result = await invoices.getInvoice(ksefNumber);
+  return typeof result === "string" ? result : Buffer.from(result).toString("utf8");
 }
 
 function paymentDueDateFromXml(xml: string) {
