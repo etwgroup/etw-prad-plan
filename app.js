@@ -610,7 +610,7 @@ function settlementRow(row) {
   return `<tr><td>${date(row.settlement_date)}<small>okres: ${date(row.period)}</small></td><td><strong>${escapeHtml(relationName(row.contracts))}</strong></td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td></tr>`;
 }
 function invoiceRow(row) {
-  const assignment = row.allocation === "contract" ? relationName(row.contracts) : row.allocation === "company" ? row.company_category : "Nieprzypisana";
+  const assignment = row.allocation === "contract" ? relationName(row.contracts) : row.allocation === "company" ? costCategoryLabel(row.company_category) : "Nieprzypisana";
   const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
@@ -765,7 +765,9 @@ function formDefinition(mode, record) {
       field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
       field("Przypisanie", select("allocation", options([["unassigned", "Do przypisania"], ["contract", "Kontrakt"], ["company", "Koszt firmowy"]], record.allocation || (state.activeView === "contractDetail" ? "contract" : "unassigned")))),
       field("Kontrakt (gdy przypisanie: kontrakt)", select("contract_id", contractSelect)),
-      field("Kategoria firmowa (gdy koszt firmowy)", input("company_category", "text", record.company_category)),
+      field("Kategoria firmowa (gdy koszt firmowy)", select("company_category", options([[
+        "", "Wybierz kategorię"
+      ], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.company_category || "")))),
       field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
     ].join("")
   };
