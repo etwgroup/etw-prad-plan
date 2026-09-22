@@ -1,6 +1,7 @@
-// PrądPlan / zapis wybranych metadanych faktur z KSeF DEMO.
-// Do serwera trafiają tylko numery zaznaczone w aktualnym podglądzie. Funkcja
-// odczytuje dane ponownie z KSeF, dzięki czemu kwoty nie pochodzą z przeglądarki.
+// PrądPlan / import metadanych faktur z KSeF DEMO.
+// Gdy przeglądarka nie przekaże numerów KSeF, funkcja importuje cały wybrany
+// miesiąc. Numery można przekazać tylko dla zachowania kompatybilności ze
+// starszym widokiem podglądu.
 import { createClient } from "@supabase/supabase-js";
 import { Buffer } from "node:buffer";
 import { createPrivateKey } from "node:crypto";
@@ -77,19 +78,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
       client.invoices.queryInvoiceMetadata(new InvoiceQueryFilterBuilder().withSubjectType("Subject2").withDateRange("Issue", from, to).build(), 0, PAGE_SIZE, "Desc"),
     ]);
 
+    const importAllForMonth = ksefNumbers.length === 0;
     const requested = new Set(ksefNumbers);
     const current = new Map<string, { invoice: KsefInvoice; type: "sales" | "purchase" }>();
     for (const invoice of sales.invoices) {
-      if (requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "sales" });
+      if (importAllForMonth || requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "sales" });
     }
     for (const invoice of purchases.invoices) {
-      if (requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "purchase" });
+      if (importAllForMonth || requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "purchase" });
     }
 
     const foundNumbers = [...current.keys()];
-    const missingCount = ksefNumbers.length - foundNumbers.length;
+    const missingCount = importAllForMonth ? 0 : ksefNumbers.length - foundNumbers.length;
     if (!foundNumbers.length) {
-      return response.status(404).json({ error: "Wybrane faktury nie są już dostępne w podglądzie KSeF. Pobierz podgląd ponownie." });
+      return response.status(200).json({
+        imported: 0,
+        skipped: 0,
+        message: "KSeF DEMO nie zwrócił faktur do importu w wybranym miesiącu.",
+      });
     }
 
     const { data: existingRows, error: existingError } = await callerClient
@@ -110,10 +116,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
     }
 
     const skipped = existing.size + missingCount;
+    const skippedMessage = missingCount
+      ? `; pominięto ${skipped} już zapisanych lub niedostępnych pozycji`
+      : existing.size ? `; pominięto ${existing.size} już zapisanych pozycji` : "";
     return response.status(200).json({
       imported: toInsert.length,
       skipped,
-      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skipped ? `; pominięto ${skipped} już zapisanych lub niedostępnych pozycji` : ""}.`,
+      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skippedMessage}.`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -168,7 +177,7 @@ function readImportRequest(body: unknown) {
     : [];
   const ksefNumbers = [...new Set(rawNumbers.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()))];
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("Nieprawidłowy miesiąc importu.");
-  if (!ksefNumbers.length || ksefNumbers.length > PAGE_SIZE * 2) throw new Error("Wybierz od 1 do 200 faktur do importu.");
+  if (ksefNumbers.length > PAGE_SIZE * 2) throw new Error("Można przekazać maksymalnie 200 faktur do importu.");
   return { month, ksefNumbers };
 }
 
