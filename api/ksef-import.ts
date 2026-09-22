@@ -40,6 +40,17 @@ type InvoiceToImport = {
   type: "sales" | "purchase";
 };
 
+type AssignmentRule = {
+  active: boolean;
+  priority: number;
+  invoice_type: "sales" | "purchase" | null;
+  match_nip: string | null;
+  match_text: string | null;
+  target_type: "contract" | "company";
+  contract_id: string | null;
+  company_category: string | null;
+};
+
 const PAGE_SIZE = 100;
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
@@ -74,6 +85,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!profile?.active || !["owner", "accountant"].includes(profile.role)) {
       return response.status(403).json({ error: "Brak uprawnień do importu KSeF." });
     }
+
+    const { data: assignmentRuleRows, error: assignmentRulesError } = await callerClient
+      .from("invoice_assignment_rules")
+      .select("active, priority, invoice_type, match_nip, match_text, target_type, contract_id, company_category")
+      .eq("active", true)
+      .order("priority", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (assignmentRulesError) throw assignmentRulesError;
+    const assignmentRules = (assignmentRuleRows || []) as AssignmentRule[];
 
     const certificatePem = certificateToPem(requiredEnvironment("KSEF_DEMO_CERTIFICATE_BASE64"));
     const privateKeyPem = privateKeyToPem(
@@ -131,10 +151,18 @@ export default async function handler(request: VercelRequest, response: VercelRe
       }),
     );
     const dueDates = dueDateResult.values;
+    const itemSummaries = dueDateResult.itemSummaries;
 
     const toInsert = [...current.values()]
       .filter(({ invoice }) => !existingByKsefNumber.has(invoice.ksefNumber))
-      .map(({ invoice, type }) => invoicePayload(invoice, type, caller.user.id, dueDates.get(invoice.ksefNumber) || null));
+      .map(({ invoice, type }) => invoicePayload(
+        invoice,
+        type,
+        caller.user.id,
+        dueDates.get(invoice.ksefNumber) || null,
+        itemSummaries.get(invoice.ksefNumber) || "",
+        matchingRule(invoice, type, itemSummaries.get(invoice.ksefNumber) || "", assignmentRules),
+      ));
 
     if (toInsert.length) {
       const { error: insertError } = await callerClient
@@ -156,6 +184,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     }
 
     const skipped = existingByKsefNumber.size + missingCount;
+    const automaticallyAssigned = toInsert.filter((row) => row.allocation !== "unassigned").length;
     const skippedMessage = missingCount
       ? `; pominięto ${skipped} już zapisanych lub niedostępnych pozycji`
       : existingByKsefNumber.size ? `; pominięto ${existingByKsefNumber.size} już zapisanych pozycji` : "";
@@ -167,7 +196,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       imported: toInsert.length,
       skipped,
       dueDatesUpdated,
-      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skippedMessage}.${dueDateMessage}${dueDateWarning}`,
+      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${dueDateMessage}${dueDateWarning}`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -178,7 +207,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
   }
 }
 
-function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId: string, dueDate: string | null) {
+function invoicePayload(
+  invoice: KsefInvoice,
+  type: "sales" | "purchase",
+  userId: string,
+  dueDate: string | null,
+  itemSummary: string,
+  rule: AssignmentRule | null,
+) {
   const netAmount = numberToCents(invoice.netAmount, "kwotę netto");
   const vatAmount = numberToCents(invoice.vatAmount, "kwotę VAT");
   const effectiveVatRate = netAmount > 0 ? Math.round((vatAmount / netAmount) * 10000) / 100 : 0;
@@ -186,6 +222,7 @@ function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId
   const counterparty = type === "sales"
     ? invoice.buyer.name || invoice.buyer.identifier.value || "Brak danych kontrahenta"
     : invoice.seller.name || invoice.seller.nip || "Brak danych kontrahenta";
+  const counterpartyNip = type === "sales" ? invoice.buyer.identifier.value || null : invoice.seller.nip || null;
 
   return {
     invoice_type: type,
@@ -193,13 +230,15 @@ function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId
     document_number: invoice.invoiceNumber || invoice.ksefNumber,
     ksef_number: invoice.ksefNumber,
     counterparty,
+    counterparty_nip: counterpartyNip,
+    ksef_item_summary: itemSummary,
     issue_date: invoice.issueDate.slice(0, 10),
     due_date: dueDate,
     net_amount_cents: netAmount,
     vat_rate: effectiveVatRate,
-    allocation: "unassigned",
-    contract_id: null,
-    company_category: null,
+    allocation: rule?.target_type || "unassigned",
+    contract_id: rule?.target_type === "contract" ? rule.contract_id : null,
+    company_category: rule?.target_type === "company" ? rule.company_category : null,
     payment_status: "nowa",
     created_by: userId,
     ksef_imported_at: new Date().toISOString(),
@@ -208,6 +247,7 @@ function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId
 
 async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
   const values = new Map<string, string>();
+  const itemSummaries = new Map<string, string>();
   let failures = 0;
   // Pobieranie dokumentów pojedynczo ogranicza ryzyko odrzucenia serii przez
   // KSeF i nie blokuje importu, jeśli jedna faktura jest niedostępna.
@@ -221,6 +261,8 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
         const xml = await downloadInvoiceXml(client, item.invoice.ksefNumber);
         const dueDate = paymentDueDateFromXml(xml);
         if (dueDate) values.set(item.invoice.ksefNumber, dueDate);
+        const itemSummary = invoiceItemSummaryFromXml(xml);
+        if (itemSummary) itemSummaries.set(item.invoice.ksefNumber, itemSummary);
       } catch (error) {
         failures += 1;
         const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -230,7 +272,37 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
   }
 
   await Promise.all(Array.from({ length: workerCount }, worker));
-  return { values, failures };
+  return { values, itemSummaries, failures };
+}
+
+function matchingRule(invoice: KsefInvoice, type: "sales" | "purchase", itemSummary: string, rules: AssignmentRule[]) {
+  const counterparty = type === "sales"
+    ? invoice.buyer.name || invoice.buyer.identifier.value || ""
+    : invoice.seller.name || invoice.seller.nip || "";
+  const nip = normalizeNip(type === "sales" ? invoice.buyer.identifier.value || "" : invoice.seller.nip || "");
+  const searchable = normalizeMatchText([counterparty, invoice.invoiceNumber, itemSummary].join(" "));
+  return rules.find((rule) => {
+    if (!rule.active || (rule.invoice_type && rule.invoice_type !== type)) return false;
+    const nipMatches = !rule.match_nip || normalizeNip(rule.match_nip) === nip;
+    const text = normalizeMatchText(rule.match_text || "");
+    const textMatches = !text || searchable.includes(text);
+    return nipMatches && textMatches;
+  }) || null;
+}
+
+function invoiceItemSummaryFromXml(xml: string) {
+  const invoice = firstTagContent(xml, "Fa") || xml;
+  return [...new Set(tagContents(invoice, "P_7").map((value) => decodeXml(value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim())).filter(Boolean))]
+    .join(" · ")
+    .slice(0, 800);
+}
+
+function normalizeNip(value: string) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeMatchText(value: string) {
+  return String(value || "").toLocaleLowerCase("pl-PL").replace(/\s+/g, " ").trim();
 }
 
 async function downloadInvoiceXml(client: KSeFClient, ksefNumber: string) {

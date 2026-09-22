@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260922-1730" />
+    <link rel="stylesheet" href="./styles.css?v=20260922-1915" />
   </head>
   <body>
     <main id="app" class="app-shell" aria-live="polite">
@@ -73,12 +73,33 @@
       </form>
     </dialog>
 
+    <dialog id="invoice-allocation-modal" class="modal invoice-allocation-modal">
+      <form id="invoice-allocation-form" method="dialog" novalidate>
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">ROZLICZENIE FAKTURY</p>
+            <h2 id="invoice-allocation-title">Podziel fakturę</h2>
+          </div>
+          <button class="icon-button" id="invoice-allocation-close" type="button" aria-label="Zamknij rozliczenie faktury">×</button>
+        </div>
+        <div id="invoice-allocation-summary" class="notice"></div>
+        <div id="invoice-allocation-rows" class="invoice-allocation-rows"></div>
+        <button class="button button-secondary" id="invoice-allocation-add" type="button">+ Dodaj część</button>
+        <p id="invoice-allocation-total" class="invoice-allocation-total"></p>
+        <p id="invoice-allocation-error" class="form-error" hidden></p>
+        <div class="modal-actions">
+          <button class="button button-secondary" id="invoice-allocation-cancel" type="button">Anuluj</button>
+          <button class="button button-primary" type="submit">Zapisz rozliczenie</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="import-toast" class="import-toast" role="status" aria-live="polite" hidden>
       <span class="import-toast-spinner" aria-hidden="true"></span>
       <div><strong>KSeF DEMO</strong><p id="import-toast-message">Trwa importowanie faktur…</p></div>
     </div>
 
     <script src="./config.js"></script>
-    <script type="module" src="./app.js?v=20260922-1810"></script>
+    <script type="module" src="./app.js?v=20260922-1915"></script>
   </body>
 </html>

@@ -234,6 +234,19 @@ textarea { min-height: 85px; resize: vertical; }
 .form-error { margin: 18px 0 0; color: var(--red); font-size: 13px; font-weight: 700; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 28px; }
 .notice { margin: 20px 0; padding: 16px 18px; border-left: 4px solid var(--yellow); background: #fff8d7; color: #624b00; font-size: 14px; line-height: 1.55; }
+.invoice-allocation-modal { width: min(940px, calc(100% - 28px)); }
+.invoice-allocation-rows { display: grid; gap: 12px; margin: 20px 0 14px; }
+.invoice-allocation-row { display: grid; grid-template-columns: minmax(135px, .7fr) minmax(190px, 1.15fr) minmax(170px, 1fr) minmax(120px, .7fr) 42px; gap: 10px; align-items: end; padding: 14px; border: 1px solid var(--line); background: #fcfcfa; }
+.invoice-allocation-row label { display: grid; gap: 6px; color: var(--ink-soft); font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.invoice-allocation-row .allocation-remove { min-height: 43px; border: 1px solid #e7c1bf; color: #a13535; background: #fffafa; font-size: 20px; line-height: 1; }
+.invoice-allocation-row .allocation-remove:hover { color: #fff; border-color: #b13a3b; background: #b13a3b; }
+.invoice-allocation-total { margin: 16px 0 0; padding: 13px 16px; border: 1px solid var(--line); background: #f7f7f5; color: var(--ink-soft); font-size: 13px; font-weight: 700; }
+.invoice-allocation-total.is-valid { border-color: #b7ddc5; color: #286243; background: #eaf6ed; }
+.invoice-allocation-total.is-invalid { border-color: #e7c1bf; color: #a13535; background: #fff5f4; }
+.allocation-summary { display: grid; gap: 4px; }
+.allocation-summary strong { color: var(--ink); }
+.inbox-panel, .rules-panel { margin-bottom: 30px; }
+.inbox-table td .tag { margin-top: 4px; }
 .invoice-preview-modal { width: min(980px, calc(100% - 28px)); max-height: min(880px, calc(100dvh - 28px)); overflow: auto; }
 .invoice-preview-shell { padding: 28px; }
 .invoice-preview-content { min-height: 160px; }
@@ -340,6 +353,8 @@ html body #app .auth-screen {
   .document-row { align-items: flex-start; flex-direction: column; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .full { grid-column: auto; }
+  .invoice-allocation-row { grid-template-columns: 1fr; }
+  .invoice-allocation-row .allocation-remove { width: 100%; }
 }
 
 @media print {

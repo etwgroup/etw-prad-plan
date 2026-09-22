@@ -16,6 +16,13 @@ const invoicePreviewContent = document.querySelector("#invoice-preview-content")
 const invoiceDeleteModal = document.querySelector("#invoice-delete-modal");
 const invoiceDeleteForm = document.querySelector("#invoice-delete-form");
 const invoiceDeleteError = document.querySelector("#invoice-delete-error");
+const invoiceAllocationModal = document.querySelector("#invoice-allocation-modal");
+const invoiceAllocationForm = document.querySelector("#invoice-allocation-form");
+const invoiceAllocationTitle = document.querySelector("#invoice-allocation-title");
+const invoiceAllocationSummary = document.querySelector("#invoice-allocation-summary");
+const invoiceAllocationRows = document.querySelector("#invoice-allocation-rows");
+const invoiceAllocationTotal = document.querySelector("#invoice-allocation-total");
+const invoiceAllocationError = document.querySelector("#invoice-allocation-error");
 
 const viewMeta = {
   dashboard: { label: "Przegląd", icon: "▦" },
@@ -36,6 +43,8 @@ const state = {
   contracts: [],
   settlements: [],
   invoices: [],
+  invoiceAllocations: [],
+  invoiceRules: [],
   costs: [],
   changes: [],
   documents: [],
@@ -54,6 +63,7 @@ const state = {
   modalMode: null,
   modalRecord: null,
   pendingInvoiceDeleteId: null,
+  pendingInvoiceAllocationId: null,
   supabase: null,
   shellEventsBound: false,
 };
@@ -313,14 +323,16 @@ async function loadView(supabase) {
 }
 
 async function loadDashboardData(supabase) {
-  const [contracts, invoices, costs] = await Promise.all([
+  const [contracts, invoices, costs, invoiceAllocations] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, client, trade, contract_number, value_cents, budget_cents, baseline_progress, due_date, status", "created_at", false),
-    selectRows(supabase, "invoices", "id, invoice_type, net_amount_cents, allocation", "issue_date", false),
+    selectRows(supabase, "invoices", "id, invoice_type, net_amount_cents, allocation, contract_id, company_category", "issue_date", false),
     selectRows(supabase, "company_costs", "id, net_amount_cents", "cost_date", false),
+    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, net_amount_cents", "created_at", false),
   ]);
   state.contracts = contracts;
   state.settlements = [];
   state.invoices = invoices;
+  state.invoiceAllocations = invoiceAllocations;
   state.costs = costs;
 }
 
@@ -334,14 +346,18 @@ async function loadSettlementData(supabase) {
 }
 
 async function loadInvoiceData(supabase) {
-  const [contracts, invoices, importRuns] = await Promise.all([
+  const [contracts, invoices, importRuns, invoiceAllocations, invoiceRules] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
-    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status, contracts(name)", "issue_date", false),
+    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status, contracts(name)", "issue_date", false),
     canManageFinance() ? selectRows(supabase, "invoice_import_runs", "id, status, environment, imported_count, skipped_count, error_message, created_at, finished_at", "created_at", false) : Promise.resolve([]),
+    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, net_amount_cents", "created_at", false),
+    canManageFinance() ? selectRows(supabase, "invoice_assignment_rules", "id, name, active, priority, invoice_type, match_nip, match_text, target_type, contract_id, company_category, contracts(name)", "priority", true) : Promise.resolve([]),
   ]);
   state.contracts = contracts;
   state.invoices = invoices;
   state.importRuns = importRuns;
+  state.invoiceAllocations = invoiceAllocations;
+  state.invoiceRules = invoiceRules;
 }
 
 async function loadContractDetailData(supabase) {
@@ -353,17 +369,21 @@ async function loadContractDetailData(supabase) {
     .eq("id", contractId)
     .single();
   if (contractError) throw contractError;
-  const [settlements, invoices, changes, documents, schedule, history] = await Promise.all([
+  const [contracts, settlements, allInvoices, invoiceAllocations, changes, documents, schedule, history] = await Promise.all([
+    selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
     selectRowsBy(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category", "contract_id", contractId, "settlement_date", false),
-    selectRowsBy(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status", "contract_id", contractId, "issue_date", false),
+    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status", "issue_date", false),
+    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, net_amount_cents", "created_at", false),
     selectRowsBy(supabase, "contract_changes", "id, kind, title, description, net_amount_cents, status, due_date, decided_at", "contract_id", contractId, "created_at", false),
     selectRowsBy(supabase, "contract_documents", "id, file_name, storage_path, mime_type, size_bytes, created_at", "contract_id", contractId, "created_at", false),
     selectRowsBy(supabase, "contract_schedule_items", "id, contract_id, title, start_date, end_date, responsible, progress, status, notes, depends_on_id, is_milestone", "contract_id", contractId, "start_date", true),
     loadContractHistory(supabase, contractId),
   ]);
   state.contractDetail = contract;
+  state.contracts = contracts;
   state.settlements = settlements;
-  state.invoices = invoices;
+  state.invoiceAllocations = invoiceAllocations;
+  state.invoices = invoicePortionsForContract(contractId, allInvoices, invoiceAllocations);
   state.changes = changes;
   state.documents = documents;
   state.schedule = schedule;
@@ -371,15 +391,17 @@ async function loadContractDetailData(supabase) {
 }
 
 async function loadAlertData(supabase) {
-  const [contracts, invoices, schedule, changes] = await Promise.all([
+  const [contracts, invoices, invoiceAllocations, schedule, changes] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, client, value_cents, budget_cents, due_date, status", "due_date", true),
     selectRows(supabase, "invoices", "id, contract_id, invoice_type, document_number, counterparty, net_amount_cents, allocation, due_date, payment_status", "due_date", true),
+    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, net_amount_cents", "created_at", false),
     selectRows(supabase, "contract_schedule_items", "id, contract_id, title, end_date, progress, status", "end_date", true),
     selectRows(supabase, "contract_changes", "id, contract_id, kind, title, due_date, status", "due_date", true),
   ]);
   state.contracts = contracts;
   state.settlements = [];
   state.invoices = invoices;
+  state.invoiceAllocations = invoiceAllocations;
   state.schedule = schedule;
   state.changes = changes;
   state.alerts = collectAlerts({ contracts, invoices, schedule, changes });
@@ -412,7 +434,7 @@ async function loadContractHistory(supabase, contractId) {
 
 function renderDashboard() {
   const contractValue = sum(state.contracts, "value_cents");
-  const unassigned = state.invoices.filter((invoice) => invoice.allocation === "unassigned");
+  const unassigned = state.invoices.filter(invoiceNeedsResolution);
   return `
     ${heading("PRĄDPLAN / PRZEGLĄD", "Portfel kontraktów", "Jedno miejsce do kontroli kontraktów, faktur i kosztów firmowych.")}
     <section class="metric-grid">
@@ -464,7 +486,7 @@ function renderInvoices() {
   const monthlyInvoices = groupRowsByMonth(state.invoices, "issue_date");
   const activeMonth = selectedMonthKey("invoiceMonth", monthlyInvoices);
   const visibleInvoices = activeMonth ? state.invoices.filter((row) => monthKey(row.issue_date) === activeMonth) : [];
-  const unassigned = visibleInvoices.filter((row) => row.allocation === "unassigned");
+  const unassigned = visibleInvoices.filter(invoiceNeedsResolution);
   const recentRuns = state.importRuns.slice(0, 5);
   return `
     ${heading("KSeF / REJESTR FAKTUR", "Faktury", "Faktury zakupowe i sprzedażowe. Każdą pozycję można przypisać do kontraktu lub kosztów firmy.", canAdd ? button("+ Dodaj fakturę", "invoice") : "")}
@@ -477,10 +499,22 @@ function renderInvoices() {
     </section>
     <section class="callout"><div class="callout-icon">⇩</div><div><h2>Import KSeF DEMO</h2><p>Zaimportuj od razu wszystkie faktury sprzedażowe i zakupowe z wybranego miesiąca. Dokumenty już zapisane w PrądPlan zostaną automatycznie pominięte po numerze KSeF.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="test-ksef-demo">Test połączenia</button><button class="button button-primary" type="button" data-action="import-ksef-month">Importuj miesiąc DEMO</button></div>` : ""}</section>
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
+    ${renderInvoiceInbox(unassigned, canAdd)}
+    ${renderInvoiceRules(canAdd)}
     <section class="panel">
-      <div class="panel-head"><div><h2>Rejestr faktur — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Dodaj ręcznie fakturę lub przypisz zaimportowaną pozycję do kontraktu.</p></div></div>
+      <div class="panel-head"><div><h2>Rejestr faktur — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Rozlicz fakturę jednorazowo albo podziel jej kwotę pomiędzy kontrakty i koszty firmowe.</p></div></div>
       ${visibleInvoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${visibleInvoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState("Brak faktur w wybranym miesiącu.")}
     </section>`;
+}
+
+function renderInvoiceInbox(rows, canManage) {
+  return `<section class="panel inbox-panel"><div class="panel-head"><div><h2>Do rozliczenia</h2><p>Faktury bez pełnego przypisania. Możesz rozdzielić jedną fakturę na kilka kontraktów lub kategorii firmowych.</p></div>${rows.length ? `<span class="tag tag-yellow">${rows.length} ${rows.length === 1 ? "faktura" : "faktur"}</span>` : `<span class="tag tag-green">Pusto</span>`}</div>${rows.length ? `<div class="table-wrap"><table class="inbox-table"><thead><tr><th>Faktura</th><th>Kontrahent</th><th>Netto FV</th><th>Pozostało</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF DEMO" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${money(invoiceUnallocatedAmount(row))}</td><td class="row-actions">${canManage ? `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : emptyState("Wszystkie faktury z wybranego miesiąca są rozliczone.")}</section>`;
+}
+
+function renderInvoiceRules(canManage) {
+  if (!canManage) return "";
+  const rows = state.invoiceRules || [];
+  return `<section class="panel rules-panel"><div class="panel-head"><div><h2>Reguły automatycznego przypisywania</h2><p>Reguły działają tylko podczas kolejnego importu KSeF. Pierwsza pasująca reguła wg priorytetu przypisuje całą nową FV.</p></div>${button("+ Dodaj regułę", "invoice-rule")}</div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Nazwa</th><th>Dopasowanie</th><th>Typ</th><th>Cel</th><th>Priorytet</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(invoiceRuleRow).join("")}</tbody></table></div>` : emptyState("Nie ma jeszcze reguł. Przykład: NIP stałego dostawcy → „Narzędzia” albo fragment opisu pozycji → konkretny kontrakt.")}</section>`;
 }
 
 function renderCosts() {
@@ -617,12 +651,12 @@ function settlementRow(row) {
   return `<tr><td>${date(row.settlement_date)}<small>okres: ${date(row.period)}</small></td><td><strong>${escapeHtml(relationName(row.contracts))}</strong></td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td></tr>`;
 }
 function invoiceRow(row) {
-  const assignment = row.allocation === "contract" ? relationName(row.contracts) : row.allocation === "company" ? costCategoryLabel(row.company_category) : "Nieprzypisana";
+  const assignment = invoiceAssignmentSummary(row);
   const preview = row.source === "ksef" && row.ksef_number && canManageFinance()
     ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
     : "";
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
-  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
+  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF DEMO" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function renderKsefPreview(activeMonth) {
@@ -653,9 +687,82 @@ function detailInvoiceRow(row) {
     ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
     : "";
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
-  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
+  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   const retention = row.invoice_type === "sales" ? retentionAmount(row.net_amount_cents, state.contractDetail?.retention_percent) : 0;
-  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${row.invoice_type === "sales" ? money(retention) : "—"}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}${row.allocation_portion ? " · część FV" : ""}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${row.invoice_type === "sales" ? money(retention) : "—"}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+}
+function invoiceRuleRow(row) {
+  const match = [row.match_nip ? `NIP: ${row.match_nip}` : "", row.match_text ? `Tekst: ${row.match_text}` : ""].filter(Boolean).join(" · ");
+  const target = row.target_type === "contract" ? relationName(row.contracts) : costCategoryLabel(row.company_category);
+  return `<tr><td><strong>${escapeHtml(row.name)}</strong></td><td>${escapeHtml(match || "—")}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : row.invoice_type === "purchase" ? "Zakupowa" : "Dowolna"}</td><td>${escapeHtml(target || "—")}</td><td>${Number(row.priority || 0)}</td><td>${row.active ? `<span class="tag tag-green">Aktywna</span>` : `<span class="tag">Wyłączona</span>`}</td><td class="row-actions"><button class="table-action" type="button" data-action="edit-invoice-rule" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice-rule" data-id="${row.id}">Usuń</button></td></tr>`;
+}
+
+function invoiceAllocationsFor(invoiceId) {
+  return (state.invoiceAllocations || []).filter((row) => row.invoice_id === invoiceId);
+}
+
+function invoiceUsesSplit(row) {
+  return invoiceAllocationsFor(row.id).length > 0;
+}
+
+function invoiceAllocatedAmount(row) {
+  const allocations = invoiceAllocationsFor(row.id);
+  if (allocations.length) return sum(allocations, "net_amount_cents");
+  return row.allocation === "unassigned" ? 0 : Number(row.net_amount_cents || 0);
+}
+
+function invoiceUnallocatedAmount(row) {
+  return Math.max(0, Number(row.net_amount_cents || 0) - invoiceAllocatedAmount(row));
+}
+
+function invoiceNeedsResolution(row) {
+  return invoiceUnallocatedAmount(row) > 0;
+}
+
+function allocationTargetLabel(row) {
+  if (row.target_type === "contract") {
+    return state.contracts.find((contract) => contract.id === row.contract_id)?.name || "Kontrakt usunięty";
+  }
+  return costCategoryLabel(row.company_category);
+}
+
+function invoiceAssignmentSummary(row) {
+  const allocations = invoiceAllocationsFor(row.id);
+  if (allocations.length) {
+    const labels = [...new Set(allocations.map(allocationTargetLabel))];
+    const suffix = invoiceNeedsResolution(row) ? ` · pozostało ${money(invoiceUnallocatedAmount(row))}` : "";
+    return `${labels.join(" + ")}${suffix}`;
+  }
+  if (row.allocation === "contract") {
+    const relatedName = relationName(row.contracts);
+    return (relatedName && relatedName !== "—" ? relatedName : state.contracts.find((contract) => contract.id === row.contract_id)?.name) || "Kontrakt";
+  }
+  if (row.allocation === "company") return costCategoryLabel(row.company_category);
+  return "Nieprzypisana";
+}
+
+function invoicePortionsForContract(contractId, invoices, allocations) {
+  const allocationByInvoice = new Map();
+  for (const allocation of allocations || []) {
+    const list = allocationByInvoice.get(allocation.invoice_id) || [];
+    list.push(allocation);
+    allocationByInvoice.set(allocation.invoice_id, list);
+  }
+  const portions = [];
+  for (const invoice of invoices || []) {
+    const splits = allocationByInvoice.get(invoice.id) || [];
+    if (splits.length) {
+      for (const allocation of splits) {
+        if (allocation.target_type !== "contract" || allocation.contract_id !== contractId) continue;
+        portions.push({ ...invoice, net_amount_cents: allocation.net_amount_cents, allocation_portion: true, allocation_id: allocation.id });
+      }
+      continue;
+    }
+    if (invoice.allocation === "contract" && invoice.contract_id === contractId) {
+      portions.push({ ...invoice, allocation_portion: false });
+    }
+  }
+  return portions.sort((left, right) => String(right.issue_date || "").localeCompare(String(left.issue_date || "")));
 }
 function changeRow(row) {
   const controls = canManageContracts() ? `${row.status === "otwarte" ? `<button class="table-action" type="button" data-action="approve-change" data-id="${row.id}">Akceptuj</button><button class="table-action danger" type="button" data-action="reject-change" data-id="${row.id}">Odrzuć</button>` : ""}<button class="table-action" type="button" data-action="edit-change" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-change" data-id="${row.id}">Usuń</button>` : "";
@@ -711,7 +818,7 @@ function userRow(row) {
 
 function openEntryModal(mode, record = null) {
   if (["contract", "settlement", "change", "document", "schedule"].includes(mode) && !canManageContracts()) return;
-  if (["invoice", "cost"].includes(mode) && !canManageFinance()) return;
+  if (["invoice", "cost", "invoice-rule"].includes(mode) && !canManageFinance()) return;
   if (["invite", "manage-user"].includes(mode) && !isOwner()) return;
   if (["change", "document", "schedule"].includes(mode) && !state.contractDetail?.id) return;
   state.modalMode = mode;
@@ -774,6 +881,7 @@ function formDefinition(mode, record) {
       field("Źródło", select("source", options([["manual", "Ręczna"], ["ksef", "KSeF"]], record.source || "manual"))),
       field("Numer dokumentu", input("document_number", "text", record.document_number, "required")),
       field("Kontrahent", input("counterparty", "text", record.counterparty, "required")),
+      field("NIP kontrahenta", input("counterparty_nip", "text", record.counterparty_nip, "inputmode=\"numeric\" placeholder=\"np. 5423261207\"")),
       field("Data wystawienia", input("issue_date", "date", record.issue_date || today, "required")),
       field("Termin płatności", input("due_date", "date", record.due_date)),
       field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
@@ -784,6 +892,19 @@ function formDefinition(mode, record) {
         "", "Wybierz kategorię"
       ], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.company_category || "")))),
       field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
+    ].join("")
+  };
+  if (mode === "invoice-rule") return {
+    eyebrow: record.id ? "EDYCJA REGUŁY KSEF" : "REGUŁA AUTOMATYCZNEGO PRZYPISANIA", title: record.id ? "Edytuj regułę" : "Dodaj regułę", fields: [
+      field("Nazwa reguły", input("name", "text", record.name, "required"), "full"),
+      field("Typ faktury", select("invoice_type", options([["", "Dowolna"], ["purchase", "Zakupowa"], ["sales", "Sprzedażowa"]], record.invoice_type || ""))),
+      field("Priorytet (niższy = wcześniej)", input("priority", "number", record.id ? record.priority : 100, "min=\"0\" max=\"9999\" required")),
+      field("NIP kontrahenta (opcjonalnie)", input("match_nip", "text", record.match_nip, "inputmode=\"numeric\" placeholder=\"np. 5423261207\"")),
+      field("Szukany tekst (opcjonalnie)", input("match_text", "text", record.match_text, "placeholder=\"np. rolki, ABC-123\"")),
+      field("Cel przypisania", select("target_type", options([["contract", "Kontrakt"], ["company", "Koszt firmowy"]], record.target_type || "contract"))),
+      field("Kontrakt (gdy cel: kontrakt)", select("contract_id", contractSelect)),
+      field("Kategoria firmowa (gdy cel: koszt firmowy)", select("company_category", options([["", "Wybierz kategorię"], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.company_category || "")))),
+      `<label class="check-field full"><input name="active" type="checkbox" ${record.id ? (record.active ? "checked" : "") : "checked"} />Reguła aktywna podczas kolejnych importów KSeF</label>`,
     ].join("")
   };
   if (mode === "cost") return {
@@ -904,6 +1025,147 @@ invoiceDeleteForm?.addEventListener("submit", async (event) => {
   }
 });
 
+document.querySelector("#invoice-allocation-close").addEventListener("click", () => invoiceAllocationModal?.close());
+document.querySelector("#invoice-allocation-cancel").addEventListener("click", () => invoiceAllocationModal?.close());
+document.querySelector("#invoice-allocation-add").addEventListener("click", () => {
+  if (!state.pendingInvoiceAllocationId) return;
+  renderInvoiceAllocationRows([...readInvoiceAllocationRows(), defaultInvoiceAllocationRow()]);
+});
+invoiceAllocationRows?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-allocation-remove]");
+  if (!button) return;
+  const rows = readInvoiceAllocationRows();
+  rows.splice(Number(button.dataset.allocationRemove), 1);
+  renderInvoiceAllocationRows(rows);
+});
+invoiceAllocationRows?.addEventListener("input", updateInvoiceAllocationTotal);
+invoiceAllocationRows?.addEventListener("change", updateInvoiceAllocationTotal);
+invoiceAllocationForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submit = invoiceAllocationForm.querySelector("button[type=submit]");
+  if (invoiceAllocationError) invoiceAllocationError.hidden = true;
+  try {
+    submit.disabled = true;
+    submit.textContent = "Zapisywanie…";
+    await saveInvoiceAllocations();
+    invoiceAllocationModal.close();
+    state.pendingInvoiceAllocationId = null;
+    await loadView(state.supabase);
+  } catch (error) {
+    if (invoiceAllocationError) {
+      invoiceAllocationError.textContent = error.message || "Nie udało się zapisać rozliczenia faktury.";
+      invoiceAllocationError.hidden = false;
+    }
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Zapisz rozliczenie";
+  }
+});
+
+function openInvoiceAllocationModal(invoiceId) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do rozliczania faktur.");
+  const invoice = state.invoices.find((row) => row.id === invoiceId);
+  if (!invoice) throw new Error("Nie znaleziono faktury do rozliczenia.");
+  if (!invoiceAllocationModal || !invoiceAllocationRows || !invoiceAllocationSummary) throw new Error("Nie można otworzyć formularza rozliczenia.");
+
+  state.pendingInvoiceAllocationId = invoiceId;
+  if (invoiceAllocationError) invoiceAllocationError.hidden = true;
+  if (invoiceAllocationTitle) invoiceAllocationTitle.textContent = `Rozlicz: ${invoice.document_number}`;
+  invoiceAllocationSummary.innerHTML = `<div class="allocation-summary"><strong>${escapeHtml(invoice.counterparty || "Brak kontrahenta")} · ${escapeHtml(invoice.document_number)}</strong><span>Wartość netto faktury: <strong>${money(invoice.net_amount_cents)}</strong>. Podziel kwotę pomiędzy kontrakty lub kategorię kosztu firmowego.</span></div>`;
+
+  const existingAllocations = invoiceAllocationsFor(invoiceId);
+  const initialRows = existingAllocations.length
+    ? existingAllocations.map((row) => ({ targetType: row.target_type, contractId: row.contract_id || "", category: row.company_category || "", amountCents: Number(row.net_amount_cents || 0) }))
+    : [{
+      targetType: invoice.allocation === "company" ? "company" : "contract",
+      contractId: invoice.allocation === "contract" ? invoice.contract_id || "" : state.contractDetail?.id || "",
+      category: invoice.allocation === "company" ? invoice.company_category || "pozostale" : "",
+      amountCents: Number(invoice.net_amount_cents || 0),
+    }];
+  renderInvoiceAllocationRows(initialRows);
+  invoiceAllocationModal.showModal();
+}
+
+function defaultInvoiceAllocationRow() {
+  return { targetType: "contract", contractId: state.contractDetail?.id || "", category: "", amountCents: 0 };
+}
+
+function invoiceAllocationContractOptions(selected = "") {
+  const contracts = [...state.contracts];
+  if (state.contractDetail?.id && !contracts.some((row) => row.id === state.contractDetail.id)) contracts.push(state.contractDetail);
+  return [["", "Wybierz kontrakt"], ...contracts.map((row) => [row.id, row.name])]
+    .map(([value, label]) => `<option value="${escapeHtml(value)}" ${String(value) === String(selected || "") ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+}
+
+function invoiceAllocationCategoryOptions(selected = "") {
+  return [["", "Wybierz kategorię"], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]]
+    .map(([value, label]) => `<option value="${value}" ${value === normalizeCostCategory(selected || "") ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function renderInvoiceAllocationRows(rows) {
+  if (!invoiceAllocationRows) return;
+  invoiceAllocationRows.innerHTML = rows.map((row, index) => `<div class="invoice-allocation-row" data-allocation-row>
+    <label>Cel<select name="target_type"><option value="contract" ${row.targetType === "contract" ? "selected" : ""}>Kontrakt</option><option value="company" ${row.targetType === "company" ? "selected" : ""}>Koszt firmowy</option></select></label>
+    <label>Kontrakt<select name="contract_id">${invoiceAllocationContractOptions(row.contractId)}</select></label>
+    <label>Kategoria firmowa<select name="company_category">${invoiceAllocationCategoryOptions(row.category)}</select></label>
+    <label>Netto (zł)<input name="amount" type="number" min="0.01" step="0.01" value="${escapeHtml((Number(row.amountCents || 0) / 100).toFixed(2))}" /></label>
+    <button class="allocation-remove" type="button" data-allocation-remove="${index}" aria-label="Usuń część">×</button>
+  </div>`).join("");
+  updateInvoiceAllocationTotal();
+}
+
+function readInvoiceAllocationRows() {
+  if (!invoiceAllocationRows) return [];
+  return [...invoiceAllocationRows.querySelectorAll("[data-allocation-row]")].map((row) => ({
+    targetType: String(row.querySelector("[name=target_type]")?.value || "contract"),
+    contractId: String(row.querySelector("[name=contract_id]")?.value || ""),
+    category: String(row.querySelector("[name=company_category]")?.value || ""),
+    amountCents: toCents(String(row.querySelector("[name=amount]")?.value || "0")),
+  }));
+}
+
+function updateInvoiceAllocationTotal() {
+  if (!invoiceAllocationTotal || !state.pendingInvoiceAllocationId) return;
+  const invoice = state.invoices.find((row) => row.id === state.pendingInvoiceAllocationId);
+  if (!invoice) return;
+  let allocated = 0;
+  try { allocated = sum(readInvoiceAllocationRows(), "amountCents"); } catch { /* Validation is shown on save. */ }
+  const remaining = Number(invoice.net_amount_cents || 0) - allocated;
+  const exact = remaining === 0 && allocated > 0;
+  invoiceAllocationTotal.textContent = `Suma części: ${money(allocated)} · do rozliczenia: ${money(Math.max(remaining, 0))}${remaining < 0 ? ` · przekroczenie: ${money(Math.abs(remaining))}` : ""}`;
+  invoiceAllocationTotal.className = `invoice-allocation-total ${exact ? "is-valid" : "is-invalid"}`;
+}
+
+async function saveInvoiceAllocations() {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do rozliczania faktur.");
+  const invoice = state.invoices.find((row) => row.id === state.pendingInvoiceAllocationId);
+  if (!invoice) throw new Error("Nie znaleziono faktury do rozliczenia.");
+  const rows = readInvoiceAllocationRows();
+  if (!rows.length) throw new Error("Dodaj co najmniej jedną część rozliczenia.");
+  for (const row of rows) {
+    if (row.amountCents <= 0) throw new Error("Każda część rozliczenia musi mieć kwotę większą od zera.");
+    if (row.targetType === "contract" && !row.contractId) throw new Error("Wybierz kontrakt dla każdej części rozliczenia typu „Kontrakt”.");
+    if (row.targetType === "company" && !row.category) throw new Error("Wybierz kategorię dla każdej części rozliczenia typu „Koszt firmowy”.");
+  }
+  if (sum(rows, "amountCents") !== Number(invoice.net_amount_cents || 0)) {
+    throw new Error(`Suma części musi być równa kwocie netto FV: ${money(invoice.net_amount_cents)}.`);
+  }
+  const { error: deleteError } = await state.supabase.from("invoice_allocations").delete().eq("invoice_id", invoice.id);
+  if (deleteError) throw deleteError;
+  const payload = rows.map((row) => ({
+    invoice_id: invoice.id,
+    target_type: row.targetType,
+    contract_id: row.targetType === "contract" ? row.contractId : null,
+    company_category: row.targetType === "company" ? normalizeCostCategory(row.category) : null,
+    net_amount_cents: row.amountCents,
+    created_by: state.user.id,
+  }));
+  const { error: insertError } = await state.supabase.from("invoice_allocations").insert(payload);
+  if (insertError) throw insertError;
+  const { error: invoiceError } = await state.supabase.from("invoices").update({ allocation: "unassigned", contract_id: null, company_category: null }).eq("id", invoice.id);
+  if (invoiceError) throw invoiceError;
+}
+
 async function saveDocument(form) {
   const file = form.get("file");
   if (!(file instanceof File) || !file.size) throw new Error("Wybierz plik do wysłania.");
@@ -964,7 +1226,20 @@ function formPayload(mode, form) {
     const category = value("company_category");
     if (allocation === "contract" && !contractId) throw new Error("Wybierz kontrakt dla tego przypisania.");
     if (allocation === "company" && !category) throw new Error("Podaj kategorię kosztu firmowego.");
-    return { table: "invoices", payload: { invoice_type: value("invoice_type"), source: value("source"), document_number: value("document_number"), counterparty: value("counterparty"), issue_date: value("issue_date"), due_date: value("due_date") || null, net_amount_cents: number("net_amount"), vat_rate: vat(), allocation, contract_id: allocation === "contract" ? contractId : null, company_category: allocation === "company" ? category : null, payment_status: value("payment_status") } };
+    return { table: "invoices", payload: { invoice_type: value("invoice_type"), source: value("source"), document_number: value("document_number"), counterparty: value("counterparty"), counterparty_nip: normalizeNip(value("counterparty_nip")) || null, issue_date: value("issue_date"), due_date: value("due_date") || null, net_amount_cents: number("net_amount"), vat_rate: vat(), allocation, contract_id: allocation === "contract" ? contractId : null, company_category: allocation === "company" ? category : null, payment_status: value("payment_status") } };
+  }
+  if (mode === "invoice-rule") {
+    const targetType = value("target_type");
+    const contractId = value("contract_id");
+    const category = value("company_category");
+    const nip = normalizeNip(value("match_nip"));
+    const matchText = value("match_text");
+    const priority = Number(value("priority"));
+    if (!nip && !matchText) throw new Error("Podaj NIP kontrahenta albo tekst, którego ma szukać reguła.");
+    if (!Number.isInteger(priority) || priority < 0 || priority > 9999) throw new Error("Priorytet musi być liczbą całkowitą od 0 do 9999.");
+    if (targetType === "contract" && !contractId) throw new Error("Wybierz kontrakt będący celem reguły.");
+    if (targetType === "company" && !category) throw new Error("Wybierz kategorię firmową będącą celem reguły.");
+    return { table: "invoice_assignment_rules", payload: { name: value("name"), active: form.get("active") === "on", priority, invoice_type: value("invoice_type") || null, match_nip: nip || null, match_text: matchText || null, target_type: targetType, contract_id: targetType === "contract" ? contractId : null, company_category: targetType === "company" ? category : null } };
   }
   if (mode === "cost") return { table: "company_costs", payload: { cost_date: value("cost_date"), category: value("category"), description: value("description"), vendor: value("vendor"), document_number: value("document_number"), net_amount_cents: number("net_amount"), vat_rate: vat(), payment_status: value("payment_status") } };
   if (mode === "change") return { table: "contract_changes", payload: { contract_id: state.contractDetail.id, kind: value("kind"), title: value("title"), description: value("description"), net_amount_cents: toSignedCents(value("net_amount")), due_date: value("due_date") || null } };
@@ -998,6 +1273,12 @@ async function handleAction(element) {
       if (user) openEntryModal("manage-user", user);
       return;
     }
+    if (action === "allocate-invoice") return openInvoiceAllocationModal(id);
+    if (action === "edit-invoice-rule") {
+      const rule = state.invoiceRules.find((row) => row.id === id);
+      if (rule) openEntryModal("invoice-rule", rule);
+      return;
+    }
     const editable = {
       "edit-settlement": ["settlement", state.settlements],
       "edit-invoice": ["invoice", state.invoices],
@@ -1007,6 +1288,9 @@ async function handleAction(element) {
     }[action];
     if (editable) {
       const record = editable[1].find((row) => row.id === id);
+      if (action === "edit-invoice" && record && invoiceUsesSplit(record)) {
+        throw new Error("Ta faktura ma podział na części. Zmień jej przypisania przez przycisk „Rozlicz”; aby zmienić kwotę FV, najpierw usuń podział.");
+      }
       if (record) openEntryModal(editable[0], record);
       return;
     }
@@ -1037,6 +1321,7 @@ async function handleAction(element) {
       "delete-cost": ["company_costs", "koszt firmowy", canManageFinance()],
       "delete-change": ["contract_changes", "pozycję decyzji", canManageContracts()],
       "delete-schedule": ["contract_schedule_items", "zadanie harmonogramu", canManageContracts()],
+      "delete-invoice-rule": ["invoice_assignment_rules", "regułę automatycznego przypisania", canManageFinance()],
     }[action];
     if (deletion) {
       if (!deletion[2]) throw new Error("Brak uprawnień do usunięcia pozycji.");
@@ -1419,7 +1704,7 @@ function collectAlerts({ contracts, invoices, schedule, changes }) {
   }
 
   for (const invoice of invoices) {
-    if (invoice.allocation === "unassigned") add("warning", "Faktura bez przypisania", `${invoice.document_number || "Faktura"} od ${invoice.counterparty || "kontrahenta"} wymaga przypisania do kontraktu lub kosztów firmy.`, null, "invoices");
+    if (invoiceNeedsResolution(invoice)) add("warning", "Faktura do rozliczenia", `${invoice.document_number || "Faktura"} od ${invoice.counterparty || "kontrahenta"} wymaga przypisania do kontraktu lub kosztów firmy.`, null, "invoices");
     if (invoice.due_date && invoice.due_date < today && !["oplacona", "zaksiegowana"].includes(invoice.payment_status)) add("critical", "Przeterminowana płatność", `${invoice.document_number || "Faktura"} — termin płatności: ${date(invoice.due_date)}.`, invoice.contract_id || null, "invoices");
     else if (invoice.due_date && invoice.due_date <= soon && !["oplacona", "zaksiegowana"].includes(invoice.payment_status)) add("warning", "Zbliża się termin płatności", `${invoice.document_number || "Faktura"} — termin płatności: ${date(invoice.due_date)}.`, invoice.contract_id || null, "invoices");
   }
@@ -1497,6 +1782,7 @@ function shiftMonth(key, direction) {
   const date = new Date(Date.UTC(year, month - 1 + direction, 1));
   return date.toISOString().slice(0, 7);
 }
+function normalizeNip(value) { return String(value || "").replace(/\D/g, ""); }
 function normalizeCostCategory(category) { return ({ najem: "najem_lokali", administracja: "pozostale", inne: "pozostale" })[category] || category || "pozostale"; }
 function costCategoryLabel(category) { return ({ paliwo: "Paliwo", narzedzia: "Narzędzia", ubior_bhp: "Ubiór BHP", najem_lokali: "Najem lokali", pozostale: "Pozostałe" })[normalizeCostCategory(category)] || "Pozostałe"; }
 function retentionAmount(cents, percent) { return Math.round(Number(cents || 0) * (Number(percent || 0) / 100)); }
