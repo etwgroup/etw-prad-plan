@@ -236,12 +236,32 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
 async function downloadInvoiceXml(client: KSeFClient, ksefNumber: string) {
   // Dokument pobiera i odszyfrowuje wyłącznie serwer. Rzutowanie zachowuje
   // zgodność z deklaracjami wersji 0.13 klienta KSeF użytej w tym projekcie.
-  const invoices = client.invoices as unknown as { getInvoice: (number: string) => Promise<string | Uint8Array> };
+  const invoices = client.invoices as unknown as { getInvoice: (number: string) => Promise<unknown> };
   if (typeof invoices.getInvoice !== "function") {
     throw new Error("Zainstalowana wersja klienta KSeF nie obsługuje pobierania XML faktury.");
   }
   const result = await invoices.getInvoice(ksefNumber);
-  return typeof result === "string" ? result : Buffer.from(result).toString("utf8");
+  return xmlTextFromResult(result);
+}
+
+function xmlTextFromResult(value: unknown, depth = 0): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("utf8");
+  if (value instanceof ArrayBuffer) return Buffer.from(value).toString("utf8");
+  if (value && typeof value === "object" && depth < 3) {
+    const record = value as Record<string, unknown>;
+    for (const key of ["xml", "invoice", "invoiceXml", "content", "data", "body", "payload", "document", "bytes"]) {
+      if (record[key] !== undefined) {
+        try {
+          return xmlTextFromResult(record[key], depth + 1);
+        } catch {
+          // Próbujemy kolejnego bezpiecznego pola odpowiedzi.
+        }
+      }
+    }
+    throw new Error(`KSeF zwrócił XML w nieobsługiwanym formacie (${Object.keys(record).join(", ") || "brak pól"}).`);
+  }
+  throw new Error("KSeF nie zwrócił treści XML faktury.");
 }
 
 function paymentDueDateFromXml(xml: string) {
