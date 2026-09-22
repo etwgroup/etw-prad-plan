@@ -54,12 +54,31 @@
       </section>
     </dialog>
 
+    <dialog id="invoice-delete-modal" class="modal">
+      <form id="invoice-delete-form" method="dialog" novalidate>
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">OPERACJA CHRONIONA</p>
+            <h2>Usuń fakturę</h2>
+          </div>
+          <button class="icon-button" id="invoice-delete-close" type="button" aria-label="Zamknij usuwanie faktury">×</button>
+        </div>
+        <div class="notice">Ta operacja jest nieodwracalna. Aby usunąć fakturę, potwierdź ją swoim hasłem właściciela.</div>
+        <label>Hasło właściciela<input name="password" type="password" autocomplete="current-password" required /></label>
+        <p id="invoice-delete-error" class="form-error" hidden></p>
+        <div class="modal-actions">
+          <button class="button button-secondary" id="invoice-delete-cancel" type="button">Anuluj</button>
+          <button class="button button-danger" type="submit">Usuń fakturę</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="import-toast" class="import-toast" role="status" aria-live="polite" hidden>
       <span class="import-toast-spinner" aria-hidden="true"></span>
       <div><strong>KSeF DEMO</strong><p id="import-toast-message">Trwa importowanie faktur…</p></div>
     </div>
 
     <script src="./config.js"></script>
-    <script type="module" src="./app.js?v=20260922-1730"></script>
+    <script type="module" src="./app.js?v=20260922-1810"></script>
   </body>
 </html>

@@ -13,6 +13,9 @@ const importToast = document.querySelector("#import-toast");
 const importToastMessage = document.querySelector("#import-toast-message");
 const invoicePreviewModal = document.querySelector("#invoice-preview-modal");
 const invoicePreviewContent = document.querySelector("#invoice-preview-content");
+const invoiceDeleteModal = document.querySelector("#invoice-delete-modal");
+const invoiceDeleteForm = document.querySelector("#invoice-delete-form");
+const invoiceDeleteError = document.querySelector("#invoice-delete-error");
 
 const viewMeta = {
   dashboard: { label: "Przegląd", icon: "▦" },
@@ -50,6 +53,7 @@ const state = {
   contractDetail: null,
   modalMode: null,
   modalRecord: null,
+  pendingInvoiceDeleteId: null,
   supabase: null,
   shellEventsBound: false,
 };
@@ -617,7 +621,8 @@ function invoiceRow(row) {
   const preview = row.source === "ksef" && row.ksef_number && canManageFinance()
     ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
     : "";
-  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
+  const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
+  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF DEMO" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function renderKsefPreview(activeMonth) {
@@ -647,7 +652,8 @@ function detailInvoiceRow(row) {
   const preview = row.source === "ksef" && row.ksef_number && canManageFinance()
     ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
     : "";
-  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
+  const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
+  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   const retention = row.invoice_type === "sales" ? retentionAmount(row.net_amount_cents, state.contractDetail?.retention_percent) : 0;
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${row.invoice_type === "sales" ? money(retention) : "—"}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
@@ -874,6 +880,29 @@ document.querySelector("#invoice-preview-download").addEventListener("click", ()
     window.alert(error.message || "Nie udało się przygotować pliku PDF.");
   }
 });
+document.querySelector("#invoice-delete-close").addEventListener("click", () => invoiceDeleteModal?.close());
+document.querySelector("#invoice-delete-cancel").addEventListener("click", () => invoiceDeleteModal?.close());
+invoiceDeleteForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submit = invoiceDeleteForm.querySelector("button[type=submit]");
+  const password = String(new FormData(invoiceDeleteForm).get("password") || "");
+  invoiceDeleteError.hidden = true;
+  try {
+    submit.disabled = true;
+    submit.textContent = "Usuwanie…";
+    await deleteInvoiceWithPassword(password);
+    invoiceDeleteModal.close();
+    invoiceDeleteForm.reset();
+    state.pendingInvoiceDeleteId = null;
+    await loadView(state.supabase);
+  } catch (error) {
+    invoiceDeleteError.textContent = error.message || "Nie udało się usunąć faktury.";
+    invoiceDeleteError.hidden = false;
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Usuń fakturę";
+  }
+});
 
 async function saveDocument(form) {
   const file = form.get("file");
@@ -986,6 +1015,7 @@ async function handleAction(element) {
     if (action === "test-ksef-demo") return await requestKsefConnectionTest("demo");
     if (action === "import-ksef-month") return await importKsefMonth(state.invoiceMonth || currentMonthKey());
     if (action === "preview-ksef-invoice") return await showKsefInvoicePreview(id);
+    if (action === "delete-invoice") return openInvoiceDeleteModal(id);
     if (action === "preview-ksef-demo") return await requestKsefPreview(state.invoiceMonth || currentMonthKey());
     if (action === "select-all-ksef-preview") return selectAllKsefPreview();
     if (action === "import-ksef-preview") return await importSelectedKsefPreview();
@@ -1004,7 +1034,6 @@ async function handleAction(element) {
 
     const deletion = {
       "delete-settlement": ["settlements", "protokół przerobowy", canManageContracts()],
-      "delete-invoice": ["invoices", "fakturę", canManageFinance()],
       "delete-cost": ["company_costs", "koszt firmowy", canManageFinance()],
       "delete-change": ["contract_changes", "pozycję decyzji", canManageContracts()],
       "delete-schedule": ["contract_schedule_items", "zadanie harmonogramu", canManageContracts()],
@@ -1020,6 +1049,36 @@ async function handleAction(element) {
   } catch (error) {
     window.alert(error.message || "Nie udało się wykonać operacji.");
   }
+}
+
+function openInvoiceDeleteModal(invoiceId) {
+  if (!isOwner()) throw new Error("Fakturę może usunąć wyłącznie właściciel.");
+  if (!state.invoices.some((row) => row.id === invoiceId)) throw new Error("Nie znaleziono faktury do usunięcia.");
+  state.pendingInvoiceDeleteId = invoiceId;
+  invoiceDeleteForm?.reset();
+  if (invoiceDeleteError) invoiceDeleteError.hidden = true;
+  invoiceDeleteModal?.showModal();
+  window.setTimeout(() => invoiceDeleteForm?.querySelector("input[name=password]")?.focus(), 0);
+}
+
+async function deleteInvoiceWithPassword(password) {
+  if (!isOwner()) throw new Error("Fakturę może usunąć wyłącznie właściciel.");
+  if (!state.pendingInvoiceDeleteId) throw new Error("Wybierz fakturę do usunięcia.");
+  if (!password) throw new Error("Podaj hasło właściciela.");
+
+  const { data: { session } } = await state.supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Sesja użytkownika wygasła. Zaloguj się ponownie.");
+
+  const response = await fetch("/api/delete-invoice", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ invoiceId: state.pendingInvoiceDeleteId, password }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Nie udało się usunąć faktury.");
 }
 
 async function downloadDocument(id) {
