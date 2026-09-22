@@ -867,6 +867,13 @@ document.querySelector("#modal-close").addEventListener("click", () => modal.clo
 document.querySelector("#modal-cancel").addEventListener("click", () => modal.close());
 document.querySelector("#invoice-preview-close").addEventListener("click", () => invoicePreviewModal?.close());
 document.querySelector("#invoice-preview-dismiss").addEventListener("click", () => invoicePreviewModal?.close());
+document.querySelector("#invoice-preview-download").addEventListener("click", () => {
+  try {
+    downloadKsefInvoicePdf();
+  } catch (error) {
+    window.alert(error.message || "Nie udało się przygotować pliku PDF.");
+  }
+});
 
 async function saveDocument(form) {
   const file = form.get("file");
@@ -1190,7 +1197,7 @@ function renderKsefInvoiceVisualization(invoice) {
   const rows = Array.isArray(invoice?.items) ? invoice.items : [];
   const paymentDetails = [
     invoice?.dueDate ? `Termin płatności: <strong>${escapeHtml(date(invoice.dueDate))}</strong>` : "Termin płatności nie został podany w dokumencie.",
-    invoice?.payment?.form ? `Forma płatności: <strong>${escapeHtml(String(invoice.payment.form))}</strong>` : "",
+    invoice?.payment?.form || invoice?.payment?.otherDescription ? `Forma płatności: <strong>${escapeHtml(paymentFormLabel(invoice?.payment?.form, invoice?.payment?.otherDescription))}</strong>` : "",
     invoice?.payment?.account ? `Rachunek: <strong>${escapeHtml(String(invoice.payment.account))}</strong>` : "",
   ].filter(Boolean).join("<br />");
   const itemRows = rows.length
@@ -1236,6 +1243,69 @@ function ksefPreviewMoney(value, currency = "PLN") {
 function vatRateLabel(value) {
   const rate = String(value || "").trim();
   return /^\d+(?:[.,]\d+)?$/.test(rate) ? `${rate}%` : rate || "—";
+}
+
+function paymentFormLabel(value, otherDescription) {
+  const forms = {
+    "1": "Gotówka",
+    "2": "Karta",
+    "3": "Bon",
+    "4": "Czek",
+    "5": "Kredyt",
+    "6": "Przelew",
+    "7": "Płatność mobilna",
+  };
+  const code = String(value || "").trim();
+  return forms[code] || String(otherDescription || "Inna forma płatności").trim();
+}
+
+function downloadKsefInvoicePdf() {
+  const paper = invoicePreviewContent?.querySelector(".invoice-preview-paper");
+  if (!paper) throw new Error("Najpierw otwórz gotowy podgląd faktury.");
+  const popup = window.open("", "_blank", "popup,width=1100,height=820");
+  if (!popup) throw new Error("Przeglądarka zablokowała okno zapisu PDF. Zezwól na wyskakujące okna dla PrądPlan.");
+  const documentNumber = paper.querySelector("h3")?.textContent?.replace(/[^a-zA-Z0-9._-]+/g, "-") || "faktura";
+  const printStyles = `
+    @page { size: A4; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #111; background: #fff; font-family: Inter, Arial, sans-serif; }
+    .invoice-preview-paper { border: 1px solid #d9d9d7; background: #fff; }
+    .invoice-preview-paper-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 26px; border-bottom: 4px solid #ffd600; }
+    .eyebrow { margin: 0; color: #906b00; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    h3 { margin: 6px 0 0; font-size: 28px; letter-spacing: -.04em; }
+    .invoice-preview-number { color: #5f6166; font-size: 12px; text-align: right; line-height: 1.55; }
+    .invoice-preview-number strong { display: block; color: #111; font-size: 14px; }
+    .invoice-preview-party-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 20px 26px; background: #fcfcfa; }
+    .invoice-preview-party { min-width: 0; padding: 13px; border: 1px solid #e1e1df; background: #fff; }
+    .invoice-preview-party h4, .invoice-preview-payment h4 { margin: 0 0 9px; color: #5f6166; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .invoice-preview-party strong, .invoice-preview-party span { display: block; overflow-wrap: anywhere; }
+    .invoice-preview-party strong { font-size: 12px; }
+    .invoice-preview-party span { margin-top: 3px; color: #5f6166; font-size: 10px; line-height: 1.4; }
+    .invoice-preview-table-wrap { padding: 0 26px 22px; }
+    .invoice-preview-table { width: 100%; border-collapse: collapse; }
+    .invoice-preview-table th { padding: 10px 8px; color: #5f6166; background: #f3f3f0; font-size: 9px; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+    .invoice-preview-table td { padding: 11px 8px; border-bottom: 1px solid #e5e5e2; font-size: 11px; vertical-align: top; }
+    .align-right { text-align: right !important; white-space: nowrap; }
+    .invoice-preview-footer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, .5fr); gap: 20px; align-items: start; padding: 0 26px 26px; }
+    .invoice-preview-payment { padding: 14px; border-left: 4px solid #ffd600; background: #fff9dd; color: #5f6166; font-size: 11px; line-height: 1.5; }
+    .invoice-preview-payment strong { color: #111; }
+    .invoice-preview-totals { border: 1px solid #d9d9d7; }
+    .invoice-preview-total { display: flex; justify-content: space-between; gap: 20px; padding: 10px 12px; border-top: 1px solid #e4e4e1; font-size: 11px; }
+    .invoice-preview-total:first-child { border-top: 0; }
+    .invoice-preview-total-grand { background: #fff1ad; font-size: 13px; font-weight: 800; }
+  `;
+  popup.document.title = documentNumber;
+  popup.document.write(`<!doctype html><html lang="pl"><head><meta charset="utf-8"><title>${escapeHtml(documentNumber)}</title><style>${printStyles}</style></head><body>${paper.outerHTML}</body></html>`);
+  popup.document.close();
+  let printed = false;
+  const print = () => {
+    if (printed) return;
+    printed = true;
+    popup.focus();
+    popup.print();
+  };
+  popup.addEventListener("load", print, { once: true });
+  window.setTimeout(print, 350);
 }
 
 function setImportProgress(message, visible) {

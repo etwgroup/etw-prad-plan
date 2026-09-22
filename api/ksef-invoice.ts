@@ -154,6 +154,7 @@ function visualizationFromXml(xml: string, ksefNumber: string) {
     recipient: partyFromXml(recipient),
     payment: {
       form: firstTagText(payment, "FormaPlatnosci"),
+      otherDescription: firstTagText(payment, "OpisPlatnosci"),
       account: firstTagText(payment, "NrRB"),
     },
     items,
