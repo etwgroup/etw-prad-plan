@@ -234,6 +234,35 @@ textarea { min-height: 85px; resize: vertical; }
 .form-error { margin: 18px 0 0; color: var(--red); font-size: 13px; font-weight: 700; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 28px; }
 .notice { margin: 20px 0; padding: 16px 18px; border-left: 4px solid var(--yellow); background: #fff8d7; color: #624b00; font-size: 14px; line-height: 1.55; }
+.invoice-preview-modal { width: min(980px, calc(100% - 28px)); max-height: min(880px, calc(100dvh - 28px)); overflow: auto; }
+.invoice-preview-shell { padding: 28px; }
+.invoice-preview-content { min-height: 160px; }
+.invoice-preview-loading { display: grid; min-height: 180px; place-items: center; color: var(--ink-soft); font-size: 14px; }
+.invoice-preview-paper { border: 1px solid #d9d9d7; background: #fff; }
+.invoice-preview-paper-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 26px; border-bottom: 4px solid var(--yellow); }
+.invoice-preview-paper h3 { margin: 6px 0 0; font-size: 28px; letter-spacing: -.04em; }
+.invoice-preview-number { color: var(--ink-soft); font-size: 13px; text-align: right; line-height: 1.55; }
+.invoice-preview-number strong { display: block; color: var(--ink); font-size: 15px; }
+.invoice-preview-party-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 22px 26px; background: #fcfcfa; }
+.invoice-preview-party { min-width: 0; padding: 16px; border: 1px solid #e1e1df; background: #fff; }
+.invoice-preview-party h4, .invoice-preview-payment h4 { margin: 0 0 11px; color: var(--ink-soft); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.invoice-preview-party strong, .invoice-preview-party span { display: block; overflow-wrap: anywhere; }
+.invoice-preview-party strong { font-size: 14px; }
+.invoice-preview-party span { margin-top: 4px; color: var(--ink-soft); font-size: 12px; line-height: 1.4; }
+.invoice-preview-table-wrap { overflow-x: auto; padding: 0 26px 24px; }
+.invoice-preview-table { width: 100%; min-width: 610px; margin: 0; border-collapse: collapse; }
+.invoice-preview-table th { padding: 12px 10px; color: var(--ink-soft); background: #f3f3f0; font-size: 10px; letter-spacing: .07em; text-transform: uppercase; text-align: left; }
+.invoice-preview-table td { padding: 13px 10px; border-bottom: 1px solid #e5e5e2; font-size: 13px; vertical-align: top; }
+.invoice-preview-table .align-right { text-align: right; white-space: nowrap; }
+.invoice-preview-empty { padding: 24px 26px; color: var(--ink-soft); font-size: 13px; }
+.invoice-preview-footer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .5fr); gap: 24px; align-items: start; padding: 0 26px 26px; }
+.invoice-preview-payment { padding: 16px; border-left: 4px solid var(--yellow); background: #fff9dd; color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
+.invoice-preview-payment strong { color: var(--ink); }
+.invoice-preview-totals { border: 1px solid #d9d9d7; }
+.invoice-preview-total { display: flex; justify-content: space-between; gap: 20px; padding: 12px 14px; border-top: 1px solid #e4e4e1; font-size: 13px; }
+.invoice-preview-total:first-child { border-top: 0; }
+.invoice-preview-total strong { white-space: nowrap; }
+.invoice-preview-total-grand { color: var(--ink); background: #fff1ad; font-size: 15px; font-weight: 800; }
 
 /* Ekran logowania musi przykrywać całą przestrzeń widoku, niezależnie od
    domyślnych marginesów lub reguł dodanych przez hosting/przeglądarkę. */
@@ -263,6 +292,11 @@ html body #app .auth-screen {
 }
 @media (max-width: 760px) {
   .import-toast { right: 16px; bottom: 16px; }
+  .invoice-preview-shell { padding: 20px; }
+  .invoice-preview-paper-header { display: block; padding: 20px; }
+  .invoice-preview-number { margin-top: 16px; text-align: left; }
+  .invoice-preview-party-grid, .invoice-preview-footer { grid-template-columns: 1fr; padding-left: 20px; padding-right: 20px; }
+  .invoice-preview-table-wrap { padding-left: 20px; padding-right: 20px; }
   html body #app .auth-screen { position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; }
   .auth-hero { min-height: auto; }
   .auth-hero-inner { min-height: auto; padding: 38px 28px; }

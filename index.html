@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260922-1510" />
+    <link rel="stylesheet" href="./styles.css?v=20260922-1555" />
   </head>
   <body>
     <main id="app" class="app-shell" aria-live="polite">
@@ -37,12 +37,28 @@
       </form>
     </dialog>
 
+    <dialog id="invoice-preview-modal" class="modal invoice-preview-modal">
+      <section class="invoice-preview-shell" aria-label="Podgląd faktury KSeF">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">KSEF DEMO / WIZUALIZACJA</p>
+            <h2>Podgląd faktury</h2>
+          </div>
+          <button class="icon-button" id="invoice-preview-close" type="button" aria-label="Zamknij podgląd">×</button>
+        </div>
+        <div id="invoice-preview-content" class="invoice-preview-content"></div>
+        <div class="modal-actions">
+          <button class="button button-secondary" id="invoice-preview-dismiss" type="button">Zamknij</button>
+        </div>
+      </section>
+    </dialog>
+
     <div id="import-toast" class="import-toast" role="status" aria-live="polite" hidden>
       <span class="import-toast-spinner" aria-hidden="true"></span>
-      <div><strong>Import KSeF DEMO</strong><p id="import-toast-message">Trwa importowanie faktur…</p></div>
+      <div><strong>KSeF DEMO</strong><p id="import-toast-message">Trwa importowanie faktur…</p></div>
     </div>
 
     <script src="./config.js"></script>
-    <script type="module" src="./app.js?v=20260922-1510"></script>
+    <script type="module" src="./app.js?v=20260922-1555"></script>
   </body>
 </html>

@@ -29,6 +29,17 @@ type KsefInvoice = {
   vatAmount: number;
 };
 
+type ExistingInvoice = {
+  id: string;
+  ksef_number: string | null;
+  due_date: string | null;
+};
+
+type InvoiceToImport = {
+  invoice: KsefInvoice;
+  type: "sales" | "purchase";
+};
+
 const PAGE_SIZE = 100;
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
@@ -80,7 +91,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const importAllForMonth = ksefNumbers.length === 0;
     const requested = new Set(ksefNumbers);
-    const current = new Map<string, { invoice: KsefInvoice; type: "sales" | "purchase" }>();
+    const current = new Map<string, InvoiceToImport>();
     for (const invoice of sales.invoices) {
       if (importAllForMonth || requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "sales" });
     }
@@ -100,13 +111,29 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const { data: existingRows, error: existingError } = await callerClient
       .from("invoices")
-      .select("ksef_number")
+      .select("id, ksef_number, due_date")
       .in("ksef_number", foundNumbers);
     if (existingError) throw existingError;
-    const existing = new Set((existingRows || []).map((row) => row.ksef_number).filter(Boolean));
+
+    const existingByKsefNumber = new Map(
+      ((existingRows || []) as ExistingInvoice[])
+        .filter((row) => Boolean(row.ksef_number))
+        .map((row) => [row.ksef_number as string, row]),
+    );
+
+    // Metadane KSeF nie zawierają terminu płatności. XML jest odczytywany
+    // tylko dla nowych faktur i dla wcześniejszych importów bez terminu.
+    const dueDates = await loadDueDates(
+      client,
+      [...current.values()].filter(({ invoice }) => {
+        const saved = existingByKsefNumber.get(invoice.ksefNumber);
+        return !saved || !saved.due_date;
+      }),
+    );
+
     const toInsert = [...current.values()]
-      .filter(({ invoice }) => !existing.has(invoice.ksefNumber))
-      .map(({ invoice, type }) => invoicePayload(invoice, type, caller.user.id));
+      .filter(({ invoice }) => !existingByKsefNumber.has(invoice.ksefNumber))
+      .map(({ invoice, type }) => invoicePayload(invoice, type, caller.user.id, dueDates.get(invoice.ksefNumber) || null));
 
     if (toInsert.length) {
       const { error: insertError } = await callerClient
@@ -115,14 +142,28 @@ export default async function handler(request: VercelRequest, response: VercelRe
       if (insertError) throw insertError;
     }
 
-    const skipped = existing.size + missingCount;
+    let dueDatesUpdated = 0;
+    for (const saved of existingByKsefNumber.values()) {
+      const dueDate = !saved.due_date && saved.ksef_number ? dueDates.get(saved.ksef_number) : null;
+      if (!dueDate) continue;
+      const { error: updateError } = await callerClient
+        .from("invoices")
+        .update({ due_date: dueDate })
+        .eq("id", saved.id);
+      if (updateError) throw updateError;
+      dueDatesUpdated += 1;
+    }
+
+    const skipped = existingByKsefNumber.size + missingCount;
     const skippedMessage = missingCount
       ? `; pominięto ${skipped} już zapisanych lub niedostępnych pozycji`
-      : existing.size ? `; pominięto ${existing.size} już zapisanych pozycji` : "";
+      : existingByKsefNumber.size ? `; pominięto ${existingByKsefNumber.size} już zapisanych pozycji` : "";
+    const dueDateMessage = dueDatesUpdated ? ` Uzupełniono termin płatności w ${dueDatesUpdated} zapisanych pozycjach.` : "";
     return response.status(200).json({
       imported: toInsert.length,
       skipped,
-      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skippedMessage}.`,
+      dueDatesUpdated,
+      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skippedMessage}.${dueDateMessage}`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -133,7 +174,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
   }
 }
 
-function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId: string) {
+function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId: string, dueDate: string | null) {
   const netAmount = numberToCents(invoice.netAmount, "kwotę netto");
   const vatAmount = numberToCents(invoice.vatAmount, "kwotę VAT");
   const effectiveVatRate = netAmount > 0 ? Math.round((vatAmount / netAmount) * 10000) / 100 : 0;
@@ -149,7 +190,7 @@ function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId
     ksef_number: invoice.ksefNumber,
     counterparty,
     issue_date: invoice.issueDate.slice(0, 10),
-    due_date: null,
+    due_date: dueDate,
     net_amount_cents: netAmount,
     vat_rate: effectiveVatRate,
     allocation: "unassigned",
@@ -159,6 +200,71 @@ function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId
     created_by: userId,
     ksef_imported_at: new Date().toISOString(),
   };
+}
+
+async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
+  const values = new Map<string, string>();
+  const workerCount = Math.min(4, invoices.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < invoices.length) {
+      const item = invoices[nextIndex++];
+      const xml = await downloadInvoiceXml(client, item.invoice.ksefNumber);
+      const dueDate = paymentDueDateFromXml(xml);
+      if (dueDate) values.set(item.invoice.ksefNumber, dueDate);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return values;
+}
+
+async function downloadInvoiceXml(client: KSeFClient, ksefNumber: string) {
+  // Dokument pobiera i odszyfrowuje wyłącznie serwer. Rzutowanie zachowuje
+  // zgodność z deklaracjami wersji 0.13 klienta KSeF użytej w tym projekcie.
+  const invoices = client.invoices as unknown as { getInvoice: (number: string) => Promise<string> };
+  if (typeof invoices.getInvoice !== "function") {
+    throw new Error("Zainstalowana wersja klienta KSeF nie obsługuje pobierania XML faktury.");
+  }
+  return invoices.getInvoice(ksefNumber);
+}
+
+function paymentDueDateFromXml(xml: string) {
+  const payment = firstTagContent(xml, "Platnosc");
+  if (!payment) return null;
+  for (const term of tagContents(payment, "TerminPlatnosci")) {
+    const value = firstTagText(term, "Termin");
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  }
+  return null;
+}
+
+function firstTagContent(xml: string, tag: string) {
+  return tagContents(xml, tag)[0] || "";
+}
+
+function firstTagText(xml: string, tag: string) {
+  const content = firstTagContent(xml, tag);
+  return content ? decodeXml(content.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim()) : "";
+}
+
+function tagContents(xml: string, tag: string) {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const expression = new RegExp(`<\\s*(?:[\\w.-]+:)?${escaped}\\b[^>]*>([\\s\\S]*?)<\\s*\\/\\s*(?:[\\w.-]+:)?${escaped}\\s*>`, "gi");
+  return Array.from(xml.matchAll(expression), (match) => match[1]);
+}
+
+function decodeXml(value: string) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#(?:x([0-9a-fA-F]+)|([0-9]+));/g, (_match, hexadecimal, decimal) => {
+      const codePoint = Number.parseInt(hexadecimal || decimal, hexadecimal ? 16 : 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    });
 }
 
 function numberToCents(value: number, label: string) {

@@ -11,6 +11,8 @@ const formError = document.querySelector("#form-error");
 const entryForm = document.querySelector("#entry-form");
 const importToast = document.querySelector("#import-toast");
 const importToastMessage = document.querySelector("#import-toast-message");
+const invoicePreviewModal = document.querySelector("#invoice-preview-modal");
+const invoicePreviewContent = document.querySelector("#invoice-preview-content");
 
 const viewMeta = {
   dashboard: { label: "Przegląd", icon: "▦" },
@@ -349,7 +351,7 @@ async function loadContractDetailData(supabase) {
   if (contractError) throw contractError;
   const [settlements, invoices, changes, documents, schedule, history] = await Promise.all([
     selectRowsBy(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category", "contract_id", contractId, "settlement_date", false),
-    selectRowsBy(supabase, "invoices", "id, invoice_type, source, document_number, counterparty, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status", "contract_id", contractId, "issue_date", false),
+    selectRowsBy(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status", "contract_id", contractId, "issue_date", false),
     selectRowsBy(supabase, "contract_changes", "id, kind, title, description, net_amount_cents, status, due_date, decided_at", "contract_id", contractId, "created_at", false),
     selectRowsBy(supabase, "contract_documents", "id, file_name, storage_path, mime_type, size_bytes, created_at", "contract_id", contractId, "created_at", false),
     selectRowsBy(supabase, "contract_schedule_items", "id, contract_id, title, start_date, end_date, responsible, progress, status, notes, depends_on_id, is_milestone", "contract_id", contractId, "start_date", true),
@@ -473,7 +475,7 @@ function renderInvoices() {
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr faktur — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Dodaj ręcznie fakturę lub przypisz zaimportowaną pozycję do kontraktu.</p></div></div>
-      ${visibleInvoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${visibleInvoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState("Brak faktur w wybranym miesiącu.")}
+      ${visibleInvoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${visibleInvoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState("Brak faktur w wybranym miesiącu.")}
     </section>`;
 }
 
@@ -612,8 +614,11 @@ function settlementRow(row) {
 }
 function invoiceRow(row) {
   const assignment = row.allocation === "contract" ? relationName(row.contracts) : row.allocation === "company" ? costCategoryLabel(row.company_category) : "Nieprzypisana";
-  const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
-  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  const preview = row.source === "ksef" && row.ksef_number && canManageFinance()
+    ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
+    : "";
+  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
+  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF DEMO" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function renderKsefPreview(activeMonth) {
   if (state.ksefPreviewMonth !== activeMonth) return "";
@@ -639,7 +644,10 @@ function detailSettlementRow(row) {
   return `<tr><td>${date(row.settlement_date)}</td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function detailInvoiceRow(row) {
-  const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
+  const preview = row.source === "ksef" && row.ksef_number && canManageFinance()
+    ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
+    : "";
+  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
   const retention = row.invoice_type === "sales" ? retentionAmount(row.net_amount_cents, state.contractDetail?.retention_percent) : 0;
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${row.invoice_type === "sales" ? money(retention) : "—"}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
@@ -857,6 +865,8 @@ entryForm.addEventListener("submit", async (event) => {
 
 document.querySelector("#modal-close").addEventListener("click", () => modal.close());
 document.querySelector("#modal-cancel").addEventListener("click", () => modal.close());
+document.querySelector("#invoice-preview-close").addEventListener("click", () => invoicePreviewModal?.close());
+document.querySelector("#invoice-preview-dismiss").addEventListener("click", () => invoicePreviewModal?.close());
 
 async function saveDocument(form) {
   const file = form.get("file");
@@ -968,6 +978,7 @@ async function handleAction(element) {
     if (action === "export-report") return exportReportCsv();
     if (action === "test-ksef-demo") return await requestKsefConnectionTest("demo");
     if (action === "import-ksef-month") return await importKsefMonth(state.invoiceMonth || currentMonthKey());
+    if (action === "preview-ksef-invoice") return await showKsefInvoicePreview(id);
     if (action === "preview-ksef-demo") return await requestKsefPreview(state.invoiceMonth || currentMonthKey());
     if (action === "select-all-ksef-preview") return selectAllKsefPreview();
     if (action === "import-ksef-preview") return await importSelectedKsefPreview();
@@ -1139,6 +1150,84 @@ async function importKsefMonth(month) {
     await loadView(state.supabase);
   } finally {
     setImportProgress("", false);
+  }
+}
+
+async function showKsefInvoicePreview(id) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do podglądu faktury KSeF.");
+  const savedInvoice = state.invoices.find((row) => row.id === id);
+  if (!savedInvoice?.ksef_number) throw new Error("Podgląd jest dostępny tylko dla faktur zaimportowanych z KSeF.");
+  const { data: { session } } = await state.supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
+  if (!invoicePreviewModal || !invoicePreviewContent) throw new Error("Nie można otworzyć okna podglądu.");
+
+  invoicePreviewContent.innerHTML = `<div class="invoice-preview-loading">Pobieranie wizualizacji faktury z KSeF DEMO…</div>`;
+  invoicePreviewModal.showModal();
+  setImportProgress("Trwa pobieranie wizualizacji faktury z KSeF DEMO…", true);
+  try {
+    const response = await fetch("/api/ksef-invoice", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ invoiceId: id }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.error || !data?.invoice) {
+      throw new Error(data?.error || "Nie udało się pobrać wizualizacji faktury z KSeF DEMO.");
+    }
+    invoicePreviewContent.innerHTML = renderKsefInvoiceVisualization(data.invoice);
+  } catch (error) {
+    invoicePreviewContent.innerHTML = `<div class="notice">${escapeHtml(error.message || "Nie udało się pobrać wizualizacji faktury.")}</div>`;
+  } finally {
+    setImportProgress("", false);
+  }
+}
+
+function renderKsefInvoiceVisualization(invoice) {
+  const currency = typeof invoice?.currency === "string" && invoice.currency ? invoice.currency : "PLN";
+  const rows = Array.isArray(invoice?.items) ? invoice.items : [];
+  const paymentDetails = [
+    invoice?.dueDate ? `Termin płatności: <strong>${escapeHtml(date(invoice.dueDate))}</strong>` : "Termin płatności nie został podany w dokumencie.",
+    invoice?.payment?.form ? `Forma płatności: <strong>${escapeHtml(String(invoice.payment.form))}</strong>` : "",
+    invoice?.payment?.account ? `Rachunek: <strong>${escapeHtml(String(invoice.payment.account))}</strong>` : "",
+  ].filter(Boolean).join("<br />");
+  const itemRows = rows.length
+    ? rows.map((row) => `<tr><td>${escapeHtml(String(row?.name || "Pozycja faktury"))}</td><td>${escapeHtml(String(row?.vatRate || "—"))}</td><td class="align-right">${ksefPreviewMoney(row?.netAmount, currency)}</td></tr>`).join("")
+    : `<tr><td class="invoice-preview-empty" colspan="3">W XML tej faktury nie ma pozycji do pokazania.</td></tr>`;
+
+  return `<article class="invoice-preview-paper">
+    <header class="invoice-preview-paper-header">
+      <div><p class="eyebrow">KSEF DEMO / ${escapeHtml(String(invoice?.kind || "FAKTURA"))}</p><h3>Faktura ${escapeHtml(String(invoice?.number || "—"))}</h3></div>
+      <div class="invoice-preview-number"><span>Data wystawienia</span><strong>${escapeHtml(date(invoice?.issueDate))}</strong><span>Numer KSeF</span><strong>${escapeHtml(String(invoice?.ksefNumber || "—"))}</strong></div>
+    </header>
+    <div class="invoice-preview-party-grid">
+      ${invoicePreviewParty("Sprzedawca", invoice?.seller)}
+      ${invoicePreviewParty("Nabywca", invoice?.buyer)}
+    </div>
+    <div class="invoice-preview-table-wrap"><table class="invoice-preview-table"><thead><tr><th>Pozycja</th><th>VAT</th><th class="align-right">Wartość netto</th></tr></thead><tbody>${itemRows}</tbody></table></div>
+    <footer class="invoice-preview-footer">
+      <div class="invoice-preview-payment"><h4>Płatność</h4>${paymentDetails}</div>
+      <div class="invoice-preview-totals">
+        <div class="invoice-preview-total"><span>Razem netto</span><strong>${ksefPreviewMoney(invoice?.totals?.netAmount, currency)}</strong></div>
+        <div class="invoice-preview-total invoice-preview-total-grand"><span>Do zapłaty</span><strong>${ksefPreviewMoney(invoice?.totals?.grossAmount, currency)}</strong></div>
+      </div>
+    </footer>
+  </article>`;
+}
+
+function invoicePreviewParty(title, party) {
+  return `<section class="invoice-preview-party"><h4>${escapeHtml(title)}</h4><strong>${escapeHtml(String(party?.name || "—"))}</strong>${party?.nip ? `<span>NIP: ${escapeHtml(String(party.nip))}</span>` : ""}${party?.address ? `<span>${escapeHtml(String(party.address))}</span>` : ""}</section>`;
+}
+
+function ksefPreviewMoney(value, currency = "PLN") {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  try {
+    return new Intl.NumberFormat("pl-PL", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${escapeHtml(currency)}`;
   }
 }
 
