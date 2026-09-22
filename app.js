@@ -497,7 +497,7 @@ function renderInvoices() {
       ${metric("Sprzedażowe", money(sum(visibleInvoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "green")}
       ${metric("Do przypisania", money(sum(unassigned, "net_amount_cents")), `${unassigned.length} pozycji`, "yellow")}
     </section>
-    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Import KSeF DEMO</h2><p>Zaimportuj od razu wszystkie faktury sprzedażowe i zakupowe z wybranego miesiąca. Dokumenty już zapisane w PrądPlan zostaną automatycznie pominięte po numerze KSeF.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="test-ksef-demo">Test połączenia</button><button class="button button-primary" type="button" data-action="import-ksef-month">Importuj miesiąc DEMO</button></div>` : ""}</section>
+    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Import KSeF DEMO</h2><p>Wybierz rodzaj faktur do importu za wybrany miesiąc. Dokumenty już zapisane w PrądPlan zostaną automatycznie pominięte po numerze KSeF.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="test-ksef-demo">Test połączenia</button><button class="button button-secondary" type="button" data-action="import-ksef-sales">Importuj FV sprzedażowe</button><button class="button button-secondary" type="button" data-action="import-ksef-purchase">Importuj FV zakupowe</button><button class="button button-primary" type="button" data-action="import-ksef-month">Importuj wszystkie</button></div>` : ""}</section>
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
     ${renderInvoiceInbox(unassigned, canAdd)}
     ${renderInvoiceRules(canAdd)}
@@ -1311,7 +1311,9 @@ async function handleAction(element) {
     if (action === "print-report") return window.print();
     if (action === "export-report") return exportReportCsv();
     if (action === "test-ksef-demo") return await requestKsefConnectionTest("demo");
-    if (action === "import-ksef-month") return await importKsefMonth(state.invoiceMonth || currentMonthKey());
+    if (action === "import-ksef-month") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "all");
+    if (action === "import-ksef-sales") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "sales");
+    if (action === "import-ksef-purchase") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "purchase");
     if (action === "preview-ksef-invoice") return await showKsefInvoicePreview(id);
     if (action === "delete-invoice") return openInvoiceDeleteModal(id);
     if (action === "preview-ksef-demo") return await requestKsefPreview(state.invoiceMonth || currentMonthKey());
@@ -1492,13 +1494,14 @@ async function importSelectedKsefPreview() {
   await loadView(state.supabase);
 }
 
-async function importKsefMonth(month) {
+async function importKsefMonth(month, invoiceType = "all") {
   if (!canManageFinance()) throw new Error("Brak uprawnień do importu KSeF.");
-  if (!window.confirm(`Zaimportować wszystkie faktury z KSeF DEMO za ${monthLabel(month)}? Dokumenty już obecne w PrądPlan zostaną pominięte.`)) return;
+  const typeLabel = invoiceType === "sales" ? "FV sprzedażowe" : invoiceType === "purchase" ? "FV zakupowe" : "wszystkie FV";
+  if (!window.confirm(`Zaimportować ${typeLabel} z KSeF DEMO za ${monthLabel(month)}? Dokumenty już obecne w PrądPlan zostaną pominięte.`)) return;
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
 
-  setImportProgress("Trwa pobieranie i importowanie faktur z KSeF DEMO…", true);
+  setImportProgress(`Trwa pobieranie i importowanie: ${typeLabel}…`, true);
   try {
     const response = await fetch("/api/ksef-import", {
       method: "POST",
@@ -1506,7 +1509,7 @@ async function importKsefMonth(month) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ month }),
+      body: JSON.stringify({ month, invoiceType }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się zaimportować faktur z KSeF DEMO.");

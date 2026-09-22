@@ -64,7 +64,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const token = authorizationToken(request.headers.authorization);
     if (!token) return response.status(401).json({ error: "Brak sesji użytkownika." });
 
-    const { month, ksefNumbers } = readImportRequest(request.body);
+    const { month, ksefNumbers, invoiceType } = readImportRequest(request.body);
     const projectUrl = requiredEnvironment("SUPABASE_URL");
     const publishableKey = requiredEnvironment("SUPABASE_PUBLISHABLE_KEY");
     const callerClient = createClient(projectUrl, publishableKey, {
@@ -105,17 +105,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const { from, to } = monthRange(month);
     const [sales, purchases] = await Promise.all([
-      client.invoices.queryInvoiceMetadata(new InvoiceQueryFilterBuilder().withSubjectType("Subject1").withDateRange("Issue", from, to).build(), 0, PAGE_SIZE, "Desc"),
-      client.invoices.queryInvoiceMetadata(new InvoiceQueryFilterBuilder().withSubjectType("Subject2").withDateRange("Issue", from, to).build(), 0, PAGE_SIZE, "Desc"),
+      invoiceType === "purchase" ? Promise.resolve(null) : client.invoices.queryInvoiceMetadata(new InvoiceQueryFilterBuilder().withSubjectType("Subject1").withDateRange("Issue", from, to).build(), 0, PAGE_SIZE, "Desc"),
+      invoiceType === "sales" ? Promise.resolve(null) : client.invoices.queryInvoiceMetadata(new InvoiceQueryFilterBuilder().withSubjectType("Subject2").withDateRange("Issue", from, to).build(), 0, PAGE_SIZE, "Desc"),
     ]);
 
     const importAllForMonth = ksefNumbers.length === 0;
     const requested = new Set(ksefNumbers);
     const current = new Map<string, InvoiceToImport>();
-    for (const invoice of sales.invoices) {
+    for (const invoice of sales?.invoices || []) {
       if (importAllForMonth || requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "sales" });
     }
-    for (const invoice of purchases.invoices) {
+    for (const invoice of purchases?.invoices || []) {
       if (importAllForMonth || requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "purchase" });
     }
 
@@ -125,7 +125,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(200).json({
         imported: 0,
         skipped: 0,
-        message: "KSeF DEMO nie zwrócił faktur do importu w wybranym miesiącu.",
+        message: `KSeF DEMO nie zwrócił ${invoiceTypeLabel(invoiceType)} do importu w wybranym miesiącu.`,
       });
     }
 
@@ -196,7 +196,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       imported: toInsert.length,
       skipped,
       dueDatesUpdated,
-      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${dueDateMessage}${dueDateWarning}`,
+      message: `Zaimportowano ${toInsert.length} (${invoiceTypeLabel(invoiceType)}) do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${dueDateMessage}${dueDateWarning}`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -390,7 +390,15 @@ function readImportRequest(body: unknown) {
   const ksefNumbers = [...new Set(rawNumbers.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()))];
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("Nieprawidłowy miesiąc importu.");
   if (ksefNumbers.length > PAGE_SIZE * 2) throw new Error("Można przekazać maksymalnie 200 faktur do importu.");
-  return { month, ksefNumbers };
+  const requestedType = typeof (payload as { invoiceType?: unknown } | null)?.invoiceType === "string"
+    ? (payload as { invoiceType: string }).invoiceType.trim()
+    : "all";
+  if (!["all", "sales", "purchase"].includes(requestedType)) throw new Error("Nieprawidłowy rodzaj faktur do importu.");
+  return { month, ksefNumbers, invoiceType: requestedType as "all" | "sales" | "purchase" };
+}
+
+function invoiceTypeLabel(type: "all" | "sales" | "purchase") {
+  return type === "sales" ? "FV sprzedażowych" : type === "purchase" ? "FV zakupowych" : "FV zakupowych i sprzedażowych";
 }
 
 function monthRange(month: string) {
