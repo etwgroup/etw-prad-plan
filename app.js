@@ -52,6 +52,7 @@ const state = {
   alerts: [],
   importRuns: [],
   invoiceMonth: "",
+  invoiceTypeFilter: "all",
   costMonth: "",
   ksefPreview: [],
   ksefPreviewMonth: "",
@@ -486,25 +487,45 @@ function renderInvoices() {
   const monthlyInvoices = groupRowsByMonth(state.invoices, "issue_date");
   const activeMonth = selectedMonthKey("invoiceMonth", monthlyInvoices);
   const visibleInvoices = activeMonth ? state.invoices.filter((row) => monthKey(row.issue_date) === activeMonth) : [];
-  const unassigned = visibleInvoices.filter(invoiceNeedsResolution);
+  const activeType = ["all", "purchase", "sales"].includes(state.invoiceTypeFilter) ? state.invoiceTypeFilter : "all";
+  const filteredInvoices = activeType === "all" ? visibleInvoices : visibleInvoices.filter((row) => row.invoice_type === activeType);
+  const unassigned = filteredInvoices.filter(invoiceNeedsResolution);
   const recentRuns = state.importRuns.slice(0, 5);
   return `
     ${heading("KSeF / REJESTR FAKTUR", "Faktury", "Faktury zakupowe i sprzedażowe. Każdą pozycję można przypisać do kontraktu lub kosztów firmy.", canAdd ? button("+ Dodaj fakturę", "invoice") : "")}
     ${monthNavigator("invoice", activeMonth, monthlyInvoices, "faktur")}
     <section class="metric-grid">
-      ${metric("Faktury", String(visibleInvoices.length), activeMonth ? monthLabel(activeMonth) : "Brak danych", "yellow")}
+      ${metric("Faktury", String(filteredInvoices.length), `${invoiceTypeFilterLabel(activeType)} · ${activeMonth ? monthLabel(activeMonth) : "brak danych"}`, "yellow")}
       ${metric("Zakupowe", money(sum(visibleInvoices.filter((row) => row.invoice_type === "purchase"), "net_amount_cents")), "Koszty z FV", "red")}
       ${metric("Sprzedażowe", money(sum(visibleInvoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "green")}
       ${metric("Do przypisania", money(sum(unassigned, "net_amount_cents")), `${unassigned.length} pozycji`, "yellow")}
     </section>
-    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Import KSeF DEMO</h2><p>Wybierz rodzaj faktur do importu za wybrany miesiąc. Dokumenty już zapisane w PrądPlan zostaną automatycznie pominięte po numerze KSeF.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="test-ksef-demo">Test połączenia</button><button class="button button-secondary" type="button" data-action="import-ksef-sales">Importuj FV sprzedażowe</button><button class="button button-secondary" type="button" data-action="import-ksef-purchase">Importuj FV zakupowe</button><button class="button button-primary" type="button" data-action="import-ksef-month">Importuj wszystkie</button></div>` : ""}</section>
+    <section class="ksef-import-card"><div class="ksef-import-intro"><div class="callout-icon">⇩</div><div><p class="eyebrow">KSEF DEMO</p><h2>Import faktur</h2><p>Wybierz rodzaj dokumentów za <strong>${escapeHtml(activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc")}</strong>. Duplikaty po numerze KSeF zostaną pominięte.</p></div></div>${canAdd ? `<div class="ksef-import-actions"><div class="ksef-import-actions-head"><span>CO CHCESZ POBRAĆ?</span><button class="text-button" type="button" data-action="test-ksef-demo">Test połączenia</button></div><div class="ksef-import-action-grid"><button class="ksef-import-button ksef-import-sales" type="button" data-action="import-ksef-sales"><span>FV sprzedażowe</span><small>Przychody z kontraktów</small></button><button class="ksef-import-button ksef-import-purchase" type="button" data-action="import-ksef-purchase"><span>FV zakupowe</span><small>Koszty i zakupy firmy</small></button><button class="ksef-import-button ksef-import-all" type="button" data-action="import-ksef-month"><span>Wszystkie FV</span><small>Zakupowe i sprzedażowe</small></button></div></div>` : ""}</section>
+    ${invoiceTypeTabs(visibleInvoices, activeType)}
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
     ${renderInvoiceInbox(unassigned, canAdd)}
     ${renderInvoiceRules(canAdd)}
     <section class="panel">
-      <div class="panel-head"><div><h2>Rejestr faktur — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Rozlicz fakturę jednorazowo albo podziel jej kwotę pomiędzy kontrakty i koszty firmowe.</p></div></div>
-      ${visibleInvoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${visibleInvoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState("Brak faktur w wybranym miesiącu.")}
+      <div class="panel-head"><div><h2>${escapeHtml(invoiceTypeFilterTitle(activeType))} — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Rozlicz fakturę jednorazowo albo podziel jej kwotę pomiędzy kontrakty i koszty firmowe.</p></div></div>
+      ${filteredInvoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${filteredInvoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState(invoiceTypeEmptyMessage(activeType))}
     </section>`;
+}
+
+function invoiceTypeTabs(rows, activeType) {
+  const count = (type) => type === "all" ? rows.length : rows.filter((row) => row.invoice_type === type).length;
+  return `<nav class="invoice-type-tabs" aria-label="Rodzaj faktur"><button class="invoice-type-tab ${activeType === "all" ? "is-active" : ""}" type="button" data-action="invoice-type-filter" data-invoice-type="all"><span>Wszystkie</span><strong>${count("all")}</strong></button><button class="invoice-type-tab invoice-type-tab-purchase ${activeType === "purchase" ? "is-active" : ""}" type="button" data-action="invoice-type-filter" data-invoice-type="purchase"><span>FV zakupowe</span><strong>${count("purchase")}</strong></button><button class="invoice-type-tab invoice-type-tab-sales ${activeType === "sales" ? "is-active" : ""}" type="button" data-action="invoice-type-filter" data-invoice-type="sales"><span>FV sprzedażowe</span><strong>${count("sales")}</strong></button></nav>`;
+}
+
+function invoiceTypeFilterLabel(type) {
+  return ({ all: "Wszystkie faktury", purchase: "FV zakupowe", sales: "FV sprzedażowe" })[type] || "Wszystkie faktury";
+}
+
+function invoiceTypeFilterTitle(type) {
+  return ({ all: "Rejestr wszystkich faktur", purchase: "Rejestr FV zakupowych", sales: "Rejestr FV sprzedażowych" })[type] || "Rejestr faktur";
+}
+
+function invoiceTypeEmptyMessage(type) {
+  return ({ all: "Brak faktur w wybranym miesiącu.", purchase: "Brak FV zakupowych w wybranym miesiącu.", sales: "Brak FV sprzedażowych w wybranym miesiącu." })[type] || "Brak faktur w wybranym miesiącu.";
 }
 
 function renderInvoiceInbox(rows, canManage) {
@@ -1280,6 +1301,11 @@ async function handleAction(element) {
       if (nextMonth <= currentMonthKey()) state[stateKey] = nextMonth;
       return await loadView(state.supabase);
     }
+    if (action === "invoice-type-filter") {
+      const selected = element.dataset.invoiceType;
+      state.invoiceTypeFilter = ["all", "purchase", "sales"].includes(selected) ? selected : "all";
+      return await loadView(state.supabase);
+    }
     if (action === "edit-contract") return openEntryModal("contract", state.contractDetail);
     if (action === "delete-contract") return await deleteContract();
     if (action === "manage-user") {
@@ -1514,6 +1540,7 @@ async function importKsefMonth(month, invoiceType = "all") {
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się zaimportować faktur z KSeF DEMO.");
     state.ksefSelectedNumbers.clear();
+    if (["sales", "purchase"].includes(invoiceType)) state.invoiceTypeFilter = invoiceType;
     window.alert(data?.message || "Zaimportowano faktury z KSeF DEMO.");
     await loadView(state.supabase);
   } finally {
