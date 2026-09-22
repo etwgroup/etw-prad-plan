@@ -40,6 +40,7 @@ const state = {
   ksefPreview: [],
   ksefPreviewMonth: "",
   ksefPreviewLimited: false,
+  ksefSelectedNumbers: new Set(),
   history: [],
   users: [],
   contractDetail: null,
@@ -227,6 +228,17 @@ function renderShell(supabase) {
       if (event.target.closest("#logout-button")) await state.supabase.auth.signOut();
     });
     app.addEventListener("change", async (event) => {
+      const ksefSelection = event.target.closest("[data-ksef-select]");
+      if (ksefSelection) {
+        const ksefNumber = ksefSelection.dataset.ksefSelect;
+        if (ksefNumber) {
+          if (ksefSelection.checked) state.ksefSelectedNumbers.add(ksefNumber);
+          else state.ksefSelectedNumbers.delete(ksefNumber);
+          const page = document.querySelector("#page-content");
+          if (page && state.activeView === "invoices") page.innerHTML = renderInvoices();
+        }
+        return;
+      }
       const picker = event.target.closest("[data-month-picker]");
       if (!picker?.value) return;
       const stateKey = picker.dataset.monthPicker === "invoice" ? "invoiceMonth" : "costMonth";
@@ -455,7 +467,7 @@ function renderInvoices() {
       ${metric("Sprzedażowe", money(sum(visibleInvoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "green")}
       ${metric("Do przypisania", money(sum(unassigned, "net_amount_cents")), `${unassigned.length} pozycji`, "yellow")}
     </section>
-    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Połączenie KSeF DEMO</h2><p>Połączenie jest aktywne. Pobierz podgląd faktur sprzedażowych i zakupowych z wybranego miesiąca. Podgląd nie zapisuje jeszcze żadnej pozycji w PrądPlan.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="test-ksef-demo">Test połączenia</button><button class="button button-primary" type="button" data-action="preview-ksef-demo">Pobierz podgląd DEMO</button></div>` : ""}</section>
+    <section class="callout"><div class="callout-icon">⇩</div><div><h2>Połączenie KSeF DEMO</h2><p>Pobierz podgląd faktur sprzedażowych i zakupowych z wybranego miesiąca, zaznacz pozycje i importuj je do rejestru PrądPlan.</p></div>${canAdd ? `<div class="callout-actions"><button class="button button-secondary" type="button" data-action="test-ksef-demo">Test połączenia</button><button class="button button-primary" type="button" data-action="preview-ksef-demo">Pobierz podgląd DEMO</button></div>` : ""}</section>
     ${renderKsefPreview(activeMonth)}
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
     <section class="panel">
@@ -605,10 +617,17 @@ function invoiceRow(row) {
 function renderKsefPreview(activeMonth) {
   if (state.ksefPreviewMonth !== activeMonth) return "";
   const rows = state.ksefPreview;
-  return `<section class="panel ksef-preview"><div class="panel-head"><div><h2>Podgląd KSeF DEMO — ${escapeHtml(monthLabel(activeMonth))}</h2><p>To wyłącznie podgląd. Faktury nie zostały zapisane, przypisane ani uwzględnione w podsumowaniach.</p></div></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Typ</th><th>Numer dokumentu</th><th>Numer KSeF</th><th>Kontrahent</th><th>Data</th><th>Netto</th><th>VAT</th><th>Brutto</th></tr></thead><tbody>${rows.map(ksefPreviewRow).join("")}</tbody></table></div>` : emptyState("KSeF DEMO nie zwrócił faktur z wybranego miesiąca.")}${state.ksefPreviewLimited ? `<p class="panel-note">Pokazano maksymalnie 100 faktur sprzedażowych i 100 zakupowych. Zawęź okres lub przejdź do importu w kolejnym kroku.</p>` : ""}</section>`;
+  const imported = new Set(state.invoices.map((row) => row.ksef_number).filter(Boolean));
+  const selectableRows = rows.filter((row) => !imported.has(row.ksefNumber));
+  const selectedCount = selectableRows.filter((row) => state.ksefSelectedNumbers.has(row.ksefNumber)).length;
+  const actions = rows.length ? `<div class="row-actions"><button class="button button-secondary" type="button" data-action="select-all-ksef-preview" ${selectableRows.length ? "" : "disabled"}>Zaznacz dostępne</button><button class="button button-primary" type="button" data-action="import-ksef-preview" ${selectedCount ? "" : "disabled"}>Importuj zaznaczone (${selectedCount})</button></div>` : "";
+  return `<section class="panel ksef-preview"><div class="panel-head"><div><h2>Podgląd KSeF DEMO — ${escapeHtml(monthLabel(activeMonth))}</h2><p>Wybierz pozycje do zapisu. Import ponownie odczyta ich dane z KSeF i zapisze je jako nieprzypisane faktury w PrądPlan.</p></div>${actions}</div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Import</th><th>Typ</th><th>Numer dokumentu</th><th>Numer KSeF</th><th>Kontrahent</th><th>Data</th><th>Netto</th><th>VAT</th><th>Brutto</th></tr></thead><tbody>${rows.map((row) => ksefPreviewRow(row, imported.has(row.ksefNumber))).join("")}</tbody></table></div>` : emptyState("KSeF DEMO nie zwrócił faktur z wybranego miesiąca.")}${state.ksefPreviewLimited ? `<p class="panel-note">Pokazano maksymalnie 100 faktur sprzedażowych i 100 zakupowych. Zawęź okres przed importem większej liczby dokumentów.</p>` : ""}</section>`;
 }
-function ksefPreviewRow(row) {
-  return `<tr><td>${row.type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td><strong>${escapeHtml(row.documentNumber || "—")}</strong></td><td><small>${escapeHtml(row.ksefNumber || "—")}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td>${date(row.issueDate)}</td><td class="money">${moneyKsef(row.netAmount, row.currency)}</td><td class="money">${moneyKsef(row.vatAmount, row.currency)}</td><td class="money">${moneyKsef(row.grossAmount, row.currency)}</td></tr>`;
+function ksefPreviewRow(row, alreadyImported) {
+  const checkbox = alreadyImported
+    ? `<span class="tag tag-green">W rejestrze</span>`
+    : `<input type="checkbox" data-ksef-select="${escapeHtml(row.ksefNumber)}" ${state.ksefSelectedNumbers.has(row.ksefNumber) ? "checked" : ""} aria-label="Wybierz fakturę ${escapeHtml(row.documentNumber || row.ksefNumber)} do importu" />`;
+  return `<tr><td>${checkbox}</td><td>${row.type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td><strong>${escapeHtml(row.documentNumber || "—")}</strong></td><td><small>${escapeHtml(row.ksefNumber || "—")}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td>${date(row.issueDate)}</td><td class="money">${moneyKsef(row.netAmount, row.currency)}</td><td class="money">${moneyKsef(row.vatAmount, row.currency)}</td><td class="money">${moneyKsef(row.grossAmount, row.currency)}</td></tr>`;
 }
 function costRow(row) {
   const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-cost" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-cost" data-id="${row.id}">Usuń</button>` : "";
@@ -946,6 +965,8 @@ async function handleAction(element) {
     if (action === "export-report") return exportReportCsv();
     if (action === "test-ksef-demo") return await requestKsefConnectionTest("demo");
     if (action === "preview-ksef-demo") return await requestKsefPreview(state.invoiceMonth || currentMonthKey());
+    if (action === "select-all-ksef-preview") return selectAllKsefPreview();
+    if (action === "import-ksef-preview") return await importSelectedKsefPreview();
     if (action === "download-document") return await downloadDocument(id);
 
     if (action === "approve-change" || action === "reject-change") {
@@ -1052,7 +1073,42 @@ async function requestKsefPreview(month) {
   state.ksefPreview = Array.isArray(data?.invoices) ? data.invoices : [];
   state.ksefPreviewMonth = data?.month || month;
   state.ksefPreviewLimited = Boolean(data?.limited);
+  state.ksefSelectedNumbers.clear();
   window.alert(data?.message || "Pobrano podgląd faktur z KSeF DEMO.");
+  await loadView(state.supabase);
+}
+
+function selectAllKsefPreview() {
+  const imported = new Set(state.invoices.map((row) => row.ksef_number).filter(Boolean));
+  for (const row of state.ksefPreview) {
+    if (!imported.has(row.ksefNumber)) state.ksefSelectedNumbers.add(row.ksefNumber);
+  }
+  const page = document.querySelector("#page-content");
+  if (page && state.activeView === "invoices") page.innerHTML = renderInvoices();
+}
+
+async function importSelectedKsefPreview() {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do importu KSeF.");
+  const month = state.ksefPreviewMonth;
+  const ksefNumbers = state.ksefPreview
+    .filter((row) => state.ksefSelectedNumbers.has(row.ksefNumber))
+    .map((row) => row.ksefNumber);
+  if (!month || !ksefNumbers.length) throw new Error("Zaznacz co najmniej jedną fakturę do importu.");
+  if (!window.confirm(`Zaimportować ${ksefNumbers.length} zaznaczonych faktur do rejestru PrądPlan? Zostaną dodane jako nieprzypisane.`)) return;
+  const { data: { session } } = await state.supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
+  const response = await fetch("/api/ksef-import", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ month, ksefNumbers }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się zaimportować wybranych faktur.");
+  state.ksefSelectedNumbers.clear();
+  window.alert(data?.message || "Zaimportowano wybrane faktury z KSeF DEMO.");
   await loadView(state.supabase);
 }
 
