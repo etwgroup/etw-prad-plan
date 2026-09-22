@@ -1039,7 +1039,21 @@ invoiceAllocationRows?.addEventListener("click", (event) => {
   renderInvoiceAllocationRows(rows);
 });
 invoiceAllocationRows?.addEventListener("input", updateInvoiceAllocationTotal);
-invoiceAllocationRows?.addEventListener("change", updateInvoiceAllocationTotal);
+invoiceAllocationRows?.addEventListener("change", (event) => {
+  const changed = event.target;
+  if (!(changed instanceof HTMLSelectElement) || changed.name !== "target_type") {
+    updateInvoiceAllocationTotal();
+    return;
+  }
+  const rowElement = changed.closest("[data-allocation-row]");
+  const index = [...invoiceAllocationRows.querySelectorAll("[data-allocation-row]")].indexOf(rowElement);
+  const rows = readInvoiceAllocationRows();
+  if (index < 0 || !rows[index]) return;
+  rows[index].targetType = changed.value === "company" ? "company" : "contract";
+  if (rows[index].targetType === "contract") rows[index].category = "";
+  else rows[index].contractId = "";
+  renderInvoiceAllocationRows(rows);
+});
 invoiceAllocationForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const submit = invoiceAllocationForm.querySelector("button[type=submit]");
@@ -1106,8 +1120,8 @@ function renderInvoiceAllocationRows(rows) {
   if (!invoiceAllocationRows) return;
   invoiceAllocationRows.innerHTML = rows.map((row, index) => `<div class="invoice-allocation-row" data-allocation-row>
     <label>Cel<select name="target_type"><option value="contract" ${row.targetType === "contract" ? "selected" : ""}>Kontrakt</option><option value="company" ${row.targetType === "company" ? "selected" : ""}>Koszt firmowy</option></select></label>
-    <label>Kontrakt<select name="contract_id">${invoiceAllocationContractOptions(row.contractId)}</select></label>
-    <label>Kategoria firmowa<select name="company_category">${invoiceAllocationCategoryOptions(row.category)}</select></label>
+    <label class="${row.targetType !== "contract" ? "is-disabled" : ""}">Kontrakt<select name="contract_id" ${row.targetType !== "contract" ? "disabled" : ""}>${invoiceAllocationContractOptions(row.targetType === "contract" ? row.contractId : "")}</select></label>
+    <label class="${row.targetType !== "company" ? "is-disabled" : ""}">Kategoria firmowa<select name="company_category" ${row.targetType !== "company" ? "disabled" : ""}>${invoiceAllocationCategoryOptions(row.targetType === "company" ? row.category : "")}</select></label>
     <label>Netto (zł)<input name="amount" type="number" min="0.01" step="0.01" value="${escapeHtml((Number(row.amountCents || 0) / 100).toFixed(2))}" /></label>
     <button class="allocation-remove" type="button" data-allocation-remove="${index}" aria-label="Usuń część">×</button>
   </div>`).join("");
