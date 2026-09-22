@@ -123,13 +123,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     // Metadane KSeF nie zawierają terminu płatności. XML jest odczytywany
     // tylko dla nowych faktur i dla wcześniejszych importów bez terminu.
-    const dueDates = await loadDueDates(
+    const dueDateResult = await loadDueDates(
       client,
       [...current.values()].filter(({ invoice }) => {
         const saved = existingByKsefNumber.get(invoice.ksefNumber);
         return !saved || !saved.due_date;
       }),
     );
+    const dueDates = dueDateResult.values;
 
     const toInsert = [...current.values()]
       .filter(({ invoice }) => !existingByKsefNumber.has(invoice.ksefNumber))
@@ -159,11 +160,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
       ? `; pominięto ${skipped} już zapisanych lub niedostępnych pozycji`
       : existingByKsefNumber.size ? `; pominięto ${existingByKsefNumber.size} już zapisanych pozycji` : "";
     const dueDateMessage = dueDatesUpdated ? ` Uzupełniono termin płatności w ${dueDatesUpdated} zapisanych pozycjach.` : "";
+    const dueDateWarning = dueDateResult.failures
+      ? ` Nie udało się odczytać terminu płatności dla ${dueDateResult.failures} faktur; spróbuj ponownie po sprawdzeniu logów Vercel.`
+      : "";
     return response.status(200).json({
       imported: toInsert.length,
       skipped,
       dueDatesUpdated,
-      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skippedMessage}.${dueDateMessage}`,
+      message: `Zaimportowano ${toInsert.length} faktur do rejestru PrądPlan${skippedMessage}.${dueDateMessage}${dueDateWarning}`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -204,20 +208,29 @@ function invoicePayload(invoice: KsefInvoice, type: "sales" | "purchase", userId
 
 async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
   const values = new Map<string, string>();
-  const workerCount = Math.min(4, invoices.length);
+  let failures = 0;
+  // Pobieranie dokumentów pojedynczo ogranicza ryzyko odrzucenia serii przez
+  // KSeF i nie blokuje importu, jeśli jedna faktura jest niedostępna.
+  const workerCount = Math.min(1, invoices.length);
   let nextIndex = 0;
 
   async function worker() {
     while (nextIndex < invoices.length) {
       const item = invoices[nextIndex++];
-      const xml = await downloadInvoiceXml(client, item.invoice.ksefNumber);
-      const dueDate = paymentDueDateFromXml(xml);
-      if (dueDate) values.set(item.invoice.ksefNumber, dueDate);
+      try {
+        const xml = await downloadInvoiceXml(client, item.invoice.ksefNumber);
+        const dueDate = paymentDueDateFromXml(xml);
+        if (dueDate) values.set(item.invoice.ksefNumber, dueDate);
+      } catch (error) {
+        failures += 1;
+        const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
+        console.warn("KSeF DEMO payment due date skipped", item.invoice.ksefNumber, diagnostic);
+      }
     }
   }
 
   await Promise.all(Array.from({ length: workerCount }, worker));
-  return values;
+  return { values, failures };
 }
 
 async function downloadInvoiceXml(client: KSeFClient, ksefNumber: string) {
