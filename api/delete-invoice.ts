@@ -82,12 +82,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     return response.status(200).json({ message: "Faktura została usunięta." });
   } catch (error) {
-    const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
+    const diagnostic = errorDiagnostic(error);
     console.error("Invoice deletion failed", diagnostic);
-    const configurationError = error instanceof Error && error.message.includes("SUPABASE_SERVICE_ROLE_KEY");
+    const configurationError = diagnostic.includes("SUPABASE_SERVICE_ROLE_KEY");
+    const permissionError = /permission denied|42501|not authorized/i.test(diagnostic);
     return response.status(500).json({
       error: configurationError
         ? "Usuwanie faktur wymaga konfiguracji bezpiecznego sekretu serwerowego w Vercel."
+        : permissionError
+          ? "Serwer nie ma uprawnienia do usunięcia faktury. Sprawdź sekret SUPABASE_SERVICE_ROLE_KEY w Vercel."
         : "Nie udało się usunąć faktury. Spróbuj ponownie.",
     });
   }
@@ -113,4 +116,16 @@ function requiredEnvironment(name: string) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Brakuje zmiennej środowiskowej ${name}.`);
   return value;
+}
+
+function errorDiagnostic(error: unknown) {
+  if (error instanceof Error) return `${error.name}: ${error.message}`.slice(0, 500);
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error).slice(0, 500);
+    } catch {
+      return "Nie udało się odczytać szczegółów błędu.";
+    }
+  }
+  return String(error || "Nieznany błąd.").slice(0, 500);
 }
