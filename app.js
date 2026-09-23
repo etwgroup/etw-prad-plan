@@ -285,10 +285,12 @@ function navButton(view) {
   return `<button type="button" class="nav-button ${view === state.activeView ? "is-active" : ""}" data-view="${view}"><span class="nav-icon">${meta.icon}</span>${meta.label}</button>`;
 }
 
-async function loadView(supabase) {
+async function loadView(supabase, { preserveScroll = false } = {}) {
   const page = document.querySelector("#page-content");
   const crumb = document.querySelector("#breadcrumb-view");
   if (!page || !crumb) return;
+  const savedScrollY = preserveScroll ? window.scrollY : 0;
+  if (preserveScroll) page.style.minHeight = `${page.offsetHeight}px`;
   crumb.textContent = viewMeta[state.activeView].label;
   page.innerHTML = `<section class="panel"><div class="empty">Pobieranie danych…</div></section>`;
 
@@ -336,6 +338,13 @@ async function loadView(supabase) {
     }
   } catch (error) {
     page.innerHTML = `<section class="panel"><div class="empty">Nie udało się pobrać danych: ${escapeHtml(error.message || "nieznany błąd")}</div></section>`;
+  } finally {
+    if (preserveScroll) {
+      window.requestAnimationFrame(() => {
+        page.style.minHeight = "";
+        window.scrollTo({ top: savedScrollY, left: 0, behavior: "auto" });
+      });
+    }
   }
 }
 
@@ -1445,7 +1454,7 @@ invoiceAllocationForm?.addEventListener("submit", async (event) => {
     await saveInvoiceAllocations();
     invoiceAllocationModal.close();
     state.pendingInvoiceAllocationId = null;
-    await loadView(state.supabase);
+    await loadView(state.supabase, { preserveScroll: true });
   } catch (error) {
     if (invoiceAllocationError) {
       invoiceAllocationError.textContent = error.message || "Nie udało się zapisać rozliczenia faktury.";
