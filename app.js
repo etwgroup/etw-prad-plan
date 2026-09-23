@@ -68,7 +68,9 @@ const state = {
   ksefPreviewMonth: "",
   ksefPreviewLimited: false,
   ksefSelectedNumbers: new Set(),
-  ksefEnvironment: "demo",
+  // Po przejściu na produkcję interfejs korzysta wyłącznie z KSeF PRODUKCJA.
+  // Dane historyczne z DEMO pozostają w bazie i nadal można je przeglądać.
+  ksefEnvironment: "production",
   history: [],
   users: [],
   contractDetail: null,
@@ -535,15 +537,11 @@ function renderSettlements() {
 
 function renderInvoices() {
   const canAdd = canManageFinance();
-  if (state.ksefEnvironment === "production" && !isOwner()) state.ksefEnvironment = "demo";
-  const ksefEnvironment = state.ksefEnvironment === "production" ? "production" : "demo";
+  const canImportKsef = canAdd && isOwner();
+  const ksefEnvironment = "production";
+  state.ksefEnvironment = ksefEnvironment;
   const ksefLabel = ksefEnvironmentLabel(ksefEnvironment);
-  const productionNotice = ksefEnvironment === "production"
-    ? `<p class="ksef-production-notice"><strong>Tryb produkcyjny:</strong> połączenie służy wyłącznie do odczytu i importu do rejestru PrądPlan. Aplikacja nie wystawia ani nie wysyła faktur do KSeF.</p>`
-    : "";
-  const environmentSwitch = isOwner()
-    ? `<div class="ksef-environment-switch" role="group" aria-label="Środowisko KSeF"><button class="ksef-environment-button ${ksefEnvironment === "demo" ? "is-active" : ""}" type="button" data-action="set-ksef-environment" data-ksef-environment="demo">DEMO</button><button class="ksef-environment-button ksef-environment-production ${ksefEnvironment === "production" ? "is-active" : ""}" type="button" data-action="set-ksef-environment" data-ksef-environment="production">PRODUKCJA</button></div>`
-    : "";
+  const productionNotice = `<p class="ksef-production-notice"><strong>Tryb produkcyjny:</strong> połączenie służy wyłącznie do odczytu i importu do rejestru PrądPlan. Aplikacja nie wystawia ani nie wysyła faktur do KSeF.</p>`;
   const monthlyInvoices = groupRowsByMonth(state.invoices, "issue_date");
   const activeMonth = selectedMonthKey("invoiceMonth", monthlyInvoices);
   const visibleInvoices = activeMonth ? state.invoices.filter((row) => monthKey(row.issue_date) === activeMonth) : [];
@@ -563,7 +561,7 @@ function renderInvoices() {
       ${invoiceAmountMetric("Do przypisania", unassigned, `${unassigned.length} pozycji`, "yellow")}
       ${invoiceAmountMetric("Faktury korygujące", corrections, `${corrections.length} nie do rozliczenia`, "blue")}
     </section>
-    <section class="ksef-import-card"><div class="ksef-import-intro"><div class="callout-icon">⇩</div><div><p class="eyebrow">${escapeHtml(ksefLabel)}</p><h2>Import faktur</h2><p>Wybierz rodzaj dokumentów za <strong>${escapeHtml(activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc")}</strong>. Duplikaty po numerze KSeF i środowisku zostaną pominięte.</p>${productionNotice}</div></div>${canAdd ? `<div class="ksef-import-actions"><div class="ksef-import-actions-head"><span>ŚRODOWISKO I ZAKRES</span>${environmentSwitch}<button class="text-button" type="button" data-action="test-ksef">Test połączenia</button></div><div class="ksef-import-action-grid"><button class="ksef-import-button ksef-import-sales" type="button" data-action="import-ksef-sales"><span>FV sprzedażowe</span><small>Przychody z kontraktów</small></button><button class="ksef-import-button ksef-import-purchase" type="button" data-action="import-ksef-purchase"><span>FV zakupowe</span><small>Koszty i zakupy firmy</small></button><button class="ksef-import-button ksef-import-all" type="button" data-action="import-ksef-month"><span>Wszystkie FV</span><small>Zakupowe i sprzedażowe</small></button></div></div>` : ""}</section>
+    <section class="ksef-import-card"><div class="ksef-import-intro"><div class="callout-icon">⇩</div><div><p class="eyebrow">${escapeHtml(ksefLabel)}</p><h2>Import faktur</h2><p>Wybierz rodzaj dokumentów za <strong>${escapeHtml(activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc")}</strong>. Duplikaty po numerze KSeF i środowisku zostaną pominięte.</p>${productionNotice}</div></div>${canImportKsef ? `<div class="ksef-import-actions"><div class="ksef-import-actions-head"><span>ŚRODOWISKO PRODUKCYJNE</span><button class="text-button" type="button" data-action="test-ksef">Test połączenia</button></div><div class="ksef-import-action-grid"><button class="ksef-import-button ksef-import-sales" type="button" data-action="import-ksef-sales"><span>FV sprzedażowe</span><small>Przychody z kontraktów</small></button><button class="ksef-import-button ksef-import-purchase" type="button" data-action="import-ksef-purchase"><span>FV zakupowe</span><small>Koszty i zakupy firmy</small></button><button class="ksef-import-button ksef-import-all" type="button" data-action="import-ksef-month"><span>Wszystkie FV</span><small>Zakupowe i sprzedażowe</small></button></div></div>` : `<div class="ksef-import-actions"><div class="notice">Import z KSeF PRODUKCJA może uruchomić wyłącznie właściciel. Pozostali użytkownicy nadal mają dostęp do rejestru zaimportowanych faktur.</div></div>`}</section>
     ${invoiceTypeTabs(visibleInvoices, activeType)}
     ${renderInvoiceInbox(unassigned, canAdd, corrections.length)}
     ${renderInvoiceCorrections(corrections)}
@@ -1767,18 +1765,7 @@ async function handleAction(element) {
     }
     if (action === "print-report") return window.print();
     if (action === "export-report") return exportReportCsv();
-    if (action === "set-ksef-environment") {
-      const environment = element.dataset.ksefEnvironment === "production" ? "production" : "demo";
-      if (environment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
-      state.ksefEnvironment = environment;
-      state.ksefPreview = [];
-      state.ksefPreviewMonth = "";
-      state.ksefSelectedNumbers.clear();
-      const page = document.querySelector("#page-content");
-      if (page && state.activeView === "invoices") page.innerHTML = renderInvoices();
-      return;
-    }
-    if (action === "test-ksef" || action === "test-ksef-demo") return await requestKsefConnectionTest(state.ksefEnvironment);
+    if (action === "test-ksef") return await requestKsefConnectionTest("production");
     if (action === "import-ksef-month") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "all");
     if (action === "import-ksef-sales") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "sales");
     if (action === "import-ksef-purchase") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "purchase");
