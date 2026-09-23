@@ -25,8 +25,10 @@ type KsefInvoice = {
   issueDate: string;
   seller: { nip: string; name?: string };
   buyer: { identifier: { value?: string }; name?: string };
-  netAmount: number;
-  vatAmount: number;
+  // API KSeF zwraca liczby, lecz tolerujemy też zapis tekstowy spotykany
+  // w odpowiedziach pośrednich bibliotek (np. "1 234,56").
+  netAmount: unknown;
+  vatAmount: unknown;
 };
 
 type ExistingInvoice = {
@@ -384,9 +386,17 @@ function decodeXml(value: string) {
     });
 }
 
-function numberToCents(value: number, label: string) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount < 0) throw new Error(`KSeF zwrócił nieprawidłową ${label}.`);
+function numberToCents(value: unknown, label: string) {
+  // Korekty z KSeF mogą mieć ujemną wartość netto i VAT. Nie wolno ich
+  // odrzucać — w podsumowaniach powinny pomniejszać wartość dokumentów.
+  const normalized = typeof value === "string"
+    ? value.trim().replace(/\s+/g, "").replace(",", ".")
+    : value;
+  const amount = typeof normalized === "number" ? normalized : Number(normalized);
+  if (normalized === "" || normalized === null || normalized === undefined || !Number.isFinite(amount)) {
+    const receivedType = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+    throw new Error(`KSeF zwrócił nieprawidłową ${label} (format: ${receivedType}).`);
+  }
   return Math.round(amount * 100);
 }
 
