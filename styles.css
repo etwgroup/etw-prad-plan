@@ -267,7 +267,7 @@ textarea { min-height: 85px; resize: vertical; }
 .notice { margin: 20px 0; padding: 16px 18px; border-left: 4px solid var(--yellow); background: #fff8d7; color: #624b00; font-size: 14px; line-height: 1.55; }
 .invoice-allocation-modal { width: min(940px, calc(100% - 28px)); }
 .invoice-allocation-rows { display: grid; gap: 12px; margin: 20px 0 14px; }
-.invoice-allocation-row { display: grid; grid-template-columns: minmax(135px, .7fr) minmax(190px, 1.15fr) minmax(170px, 1fr) minmax(120px, .7fr) 42px; gap: 10px; align-items: end; padding: 14px; border: 1px solid var(--line); background: #fcfcfa; }
+.invoice-allocation-row { display: grid; grid-template-columns: minmax(115px, .65fr) minmax(170px, 1fr) minmax(145px, .9fr) minmax(160px, 1fr) minmax(110px, .65fr) 42px; gap: 10px; align-items: end; padding: 14px; border: 1px solid var(--line); background: #fcfcfa; }
 .invoice-allocation-row label { display: grid; gap: 6px; color: var(--ink-soft); font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .invoice-allocation-row label.is-disabled { color: #aaa; }
 .invoice-allocation-row select:disabled { cursor: not-allowed; border-color: #e3e3e0; color: #aaa; background: #f3f3f1; }
@@ -310,6 +310,47 @@ textarea { min-height: 85px; resize: vertical; }
 .invoice-preview-total strong { white-space: nowrap; }
 .invoice-preview-total-grand { color: var(--ink); background: #fff1ad; font-size: 15px; font-weight: 800; }
 
+.cashflow-overview { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(260px, .55fr); gap: 20px; margin-bottom: 20px; }
+.cashflow-calendar, .cashflow-summary, .cashflow-list, .contract-budget-panel { margin-bottom: 20px; }
+.cashflow-days { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); }
+.cashflow-day { display: grid; gap: 9px; min-height: 126px; padding: 16px; background: var(--white); }
+.cashflow-day time { color: var(--ink); font-size: 13px; font-weight: 800; }
+.cashflow-day small { margin-top: auto; color: var(--ink-soft); font-size: 11px; }
+.cashflow-day-totals { display: grid; gap: 4px; font-size: 12px; font-weight: 800; }
+.cashflow-in { color: #287247; }
+.cashflow-out { color: #a13535; }
+.cashflow-day.has-in { box-shadow: inset 0 3px 0 #55aa75; }
+.cashflow-day.has-out { box-shadow: inset 0 -3px 0 #cb6863; }
+.cashflow-summary-body { display: grid; }
+.cashflow-summary-body > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 19px 22px; border-top: 1px solid var(--line); }
+.cashflow-summary-body span { color: var(--ink-soft); font-size: 13px; }
+.cashflow-summary-body strong { font-size: 17px; letter-spacing: -.03em; }
+.cashflow-summary-body strong.positive { color: #287247; }
+.cashflow-summary-body strong.negative, .money-negative { color: #a13535; }
+.cashflow-direction { display: inline-block; padding: 5px 8px; background: #f1f1ef; font-size: 11px; font-weight: 800; }
+.cashflow-direction.cashflow-in { background: #e3f2e8; }
+.cashflow-direction.cashflow-out { background: #fae4e2; }
+.overdue { color: #a13535 !important; font-weight: 800; }
+.budget-panel-total { display: grid; gap: 4px; text-align: right; }
+.budget-panel-total span { color: var(--ink-soft); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.budget-panel-total strong { font-size: 17px; letter-spacing: -.03em; }
+.budget-progress { width: 110px; height: 8px; margin-bottom: 5px; overflow: hidden; background: #e7e7e5; }
+.budget-progress span { display: block; height: 100%; background: #7390d8; }
+.contract-budget-panel tbody tr:has(.money-negative) .budget-progress span { background: #cb6863; }
+.panel-note { margin: 0; padding: 16px 26px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+.invoice-attachments-modal { width: min(760px, calc(100% - 28px)); max-height: min(760px, calc(100dvh - 28px)); overflow: auto; }
+.invoice-attachments-shell { padding: 28px; }
+.invoice-attachments-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.invoice-attachments-heading .eyebrow { margin: 0 0 7px; }
+.invoice-attachments-heading h3 { margin: 0; font-size: 23px; letter-spacing: -.04em; }
+.invoice-attachments-heading p:last-child { margin: 6px 0 0; color: var(--ink-soft); font-size: 13px; }
+.invoice-attachments-ocr-note { display: flex; gap: 12px; margin: 18px 0; padding: 14px 16px; border-left: 4px solid var(--yellow); background: #fff8d7; color: #624b00; font-size: 12px; line-height: 1.45; }
+.invoice-attachments-ocr-note strong { flex: 0 0 auto; color: var(--ink); font-size: 11px; letter-spacing: .06em; }
+.invoice-attachment-list { display: grid; }
+.invoice-attachment-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 0; border-top: 1px solid #ececea; }
+.invoice-attachment-row strong, .invoice-attachment-row small { display: block; }
+.invoice-attachment-row small { margin-top: 4px; color: var(--ink-soft); font-size: 12px; }
+
 /* Ekran logowania musi przykrywać całą przestrzeń widoku, niezależnie od
    domyślnych marginesów lub reguł dodanych przez hosting/przeglądarkę. */
 html body #app .auth-screen {
@@ -336,6 +377,8 @@ html body #app .auth-screen {
   .cost-breakdown { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .detail-grid { grid-template-columns: 1fr; }
   .invoice-preview-party-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cashflow-overview { grid-template-columns: 1fr; }
+  .cashflow-days { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ksef-import-card { grid-template-columns: 1fr; }
   .ksef-import-intro { border-right: 0; border-bottom: 1px solid #eadb94; }
 }
@@ -346,6 +389,10 @@ html body #app .auth-screen {
   .invoice-preview-number { margin-top: 16px; text-align: left; }
   .invoice-preview-party-grid, .invoice-preview-footer { grid-template-columns: 1fr; padding-left: 20px; padding-right: 20px; }
   .invoice-preview-table-wrap { padding-left: 20px; padding-right: 20px; }
+  .cashflow-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cashflow-day { min-height: 112px; padding: 13px; }
+  .invoice-attachments-shell { padding: 20px; }
+  .invoice-attachments-heading, .invoice-attachment-row { align-items: flex-start; flex-direction: column; }
   html body #app .auth-screen { position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; }
   .auth-hero { min-height: auto; }
   .auth-hero-inner { min-height: auto; padding: 38px 28px; }

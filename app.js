@@ -23,6 +23,8 @@ const invoiceAllocationSummary = document.querySelector("#invoice-allocation-sum
 const invoiceAllocationRows = document.querySelector("#invoice-allocation-rows");
 const invoiceAllocationTotal = document.querySelector("#invoice-allocation-total");
 const invoiceAllocationError = document.querySelector("#invoice-allocation-error");
+const invoiceAttachmentsModal = document.querySelector("#invoice-attachments-modal");
+const invoiceAttachmentsContent = document.querySelector("#invoice-attachments-content");
 
 const viewMeta = {
   dashboard: { label: "Przegląd", icon: "▦" },
@@ -30,6 +32,7 @@ const viewMeta = {
   settlements: { label: "Protokoły przerobowe", icon: "▤" },
   invoices: { label: "Faktury", icon: "▧" },
   costs: { label: "Koszty firmowe", icon: "▱" },
+  cashflow: { label: "Płatności i cash flow", icon: "↕" },
   alerts: { label: "Alerty i terminy", icon: "!" },
   reports: { label: "Raporty", icon: "▥" },
   users: { label: "Zespół i uprawnienia", icon: "◉" },
@@ -45,6 +48,8 @@ const state = {
   invoices: [],
   invoiceAllocations: [],
   invoiceRules: [],
+  invoiceAttachments: [],
+  budgetCategories: [],
   costs: [],
   changes: [],
   documents: [],
@@ -54,6 +59,7 @@ const state = {
   invoiceMonth: "",
   invoiceTypeFilter: "all",
   costMonth: "",
+  cashflowMonth: "",
   ksefPreview: [],
   ksefPreviewMonth: "",
   ksefPreviewLimited: false,
@@ -65,6 +71,7 @@ const state = {
   modalRecord: null,
   pendingInvoiceDeleteId: null,
   pendingInvoiceAllocationId: null,
+  pendingInvoiceAttachmentId: null,
   supabase: null,
   shellEventsBound: false,
 };
@@ -196,6 +203,7 @@ function renderShell(supabase) {
           ${navButton("settlements")}
           ${navButton("invoices")}
           ${navButton("costs")}
+          ${navButton("cashflow")}
         </nav>
         <p class="nav-label">ANALIZY</p>
         <nav class="nav" aria-label="Raporty">
@@ -260,7 +268,8 @@ function renderShell(supabase) {
       }
       const picker = event.target.closest("[data-month-picker]");
       if (!picker?.value) return;
-      const stateKey = picker.dataset.monthPicker === "invoice" ? "invoiceMonth" : "costMonth";
+      const stateKey = ({ invoice: "invoiceMonth", cost: "costMonth", cashflow: "cashflowMonth" })[picker.dataset.monthPicker];
+      if (!stateKey) return;
       state[stateKey] = picker.value;
       await loadView(state.supabase);
     });
@@ -298,8 +307,12 @@ async function loadView(supabase) {
       page.innerHTML = renderInvoices();
     }
     if (state.activeView === "costs") {
-      state.costs = await selectRows(supabase, "company_costs", "id, cost_date, category, description, vendor, document_number, net_amount_cents, vat_rate, payment_status", "cost_date", false);
+      state.costs = await selectRows(supabase, "company_costs", "id, cost_date, due_date, paid_at, category, description, vendor, document_number, net_amount_cents, vat_rate, payment_status", "cost_date", false);
       page.innerHTML = renderCosts();
+    }
+    if (state.activeView === "cashflow") {
+      await loadCashflowData(supabase);
+      page.innerHTML = renderCashflow();
     }
     if (state.activeView === "alerts") {
       await loadAlertData(supabase);
@@ -328,12 +341,21 @@ async function loadDashboardData(supabase) {
     selectRows(supabase, "contracts", "id, name, client, trade, contract_number, value_cents, budget_cents, baseline_progress, due_date, status", "created_at", false),
     selectRows(supabase, "invoices", "id, invoice_type, net_amount_cents, allocation, contract_id, company_category", "issue_date", false),
     selectRows(supabase, "company_costs", "id, net_amount_cents", "cost_date", false),
-    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, net_amount_cents", "created_at", false),
+    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, budget_category, net_amount_cents", "created_at", false),
   ]);
   state.contracts = contracts;
   state.settlements = [];
   state.invoices = invoices;
   state.invoiceAllocations = invoiceAllocations;
+  state.costs = costs;
+}
+
+async function loadCashflowData(supabase) {
+  const [invoices, costs] = await Promise.all([
+    selectRows(supabase, "invoices", "id, invoice_type, document_number, counterparty, issue_date, due_date, paid_at, net_amount_cents, vat_rate, payment_status, allocation, contract_id, company_category, contracts(name)", "due_date", true),
+    selectRows(supabase, "company_costs", "id, cost_date, due_date, paid_at, category, description, vendor, document_number, net_amount_cents, vat_rate, payment_status", "due_date", true),
+  ]);
+  state.invoices = invoices;
   state.costs = costs;
 }
 
@@ -347,18 +369,20 @@ async function loadSettlementData(supabase) {
 }
 
 async function loadInvoiceData(supabase) {
-  const [contracts, invoices, importRuns, invoiceAllocations, invoiceRules] = await Promise.all([
+  const [contracts, invoices, importRuns, invoiceAllocations, invoiceRules, invoiceAttachments] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
-    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status, contracts(name)", "issue_date", false),
+    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status, contracts(name)", "issue_date", false),
     canManageFinance() ? selectRows(supabase, "invoice_import_runs", "id, status, environment, imported_count, skipped_count, error_message, created_at, finished_at", "created_at", false) : Promise.resolve([]),
-    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, net_amount_cents", "created_at", false),
+    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, budget_category, net_amount_cents", "created_at", false),
     canManageFinance() ? selectRows(supabase, "invoice_assignment_rules", "id, name, active, priority, invoice_type, match_nip, match_text, target_type, contract_id, company_category, contracts(name)", "priority", true) : Promise.resolve([]),
+    selectRows(supabase, "invoice_attachments", "id, invoice_id, file_name, storage_path, mime_type, size_bytes, label, ocr_status, created_at", "created_at", false),
   ]);
   state.contracts = contracts;
   state.invoices = invoices;
   state.importRuns = importRuns;
   state.invoiceAllocations = invoiceAllocations;
   state.invoiceRules = invoiceRules;
+  state.invoiceAttachments = invoiceAttachments;
 }
 
 async function loadContractDetailData(supabase) {
@@ -370,11 +394,13 @@ async function loadContractDetailData(supabase) {
     .eq("id", contractId)
     .single();
   if (contractError) throw contractError;
-  const [contracts, settlements, allInvoices, invoiceAllocations, changes, documents, schedule, history] = await Promise.all([
+  const [contracts, settlements, allInvoices, invoiceAllocations, budgetCategories, invoiceAttachments, changes, documents, schedule, history] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
     selectRowsBy(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category", "contract_id", contractId, "settlement_date", false),
-    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, net_amount_cents, vat_rate, allocation, contract_id, company_category, payment_status", "issue_date", false),
-    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, net_amount_cents", "created_at", false),
+    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status", "issue_date", false),
+    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, budget_category, net_amount_cents", "created_at", false),
+    selectRowsBy(supabase, "contract_budget_categories", "id, contract_id, category, planned_cents, notes", "contract_id", contractId, "category", true),
+    selectRows(supabase, "invoice_attachments", "id, invoice_id, file_name, storage_path, mime_type, size_bytes, label, ocr_status, created_at", "created_at", false),
     selectRowsBy(supabase, "contract_changes", "id, kind, title, description, net_amount_cents, status, due_date, decided_at", "contract_id", contractId, "created_at", false),
     selectRowsBy(supabase, "contract_documents", "id, file_name, storage_path, mime_type, size_bytes, created_at", "contract_id", contractId, "created_at", false),
     selectRowsBy(supabase, "contract_schedule_items", "id, contract_id, title, start_date, end_date, responsible, progress, status, notes, depends_on_id, is_milestone", "contract_id", contractId, "start_date", true),
@@ -384,6 +410,8 @@ async function loadContractDetailData(supabase) {
   state.contracts = contracts;
   state.settlements = settlements;
   state.invoiceAllocations = invoiceAllocations;
+  state.budgetCategories = budgetCategories;
+  state.invoiceAttachments = invoiceAttachments;
   state.invoices = invoicePortionsForContract(contractId, allInvoices, invoiceAllocations);
   state.changes = changes;
   state.documents = documents;
@@ -560,6 +588,47 @@ function renderCosts() {
     </section>`;
 }
 
+function renderCashflow() {
+  const cashItems = cashflowItems(state.invoices, state.costs);
+  const months = groupRowsByMonth(cashItems, "cash_date");
+  // Cash flow always opens on the current month; the user may then freely
+  // select a historical or future period in the month navigator.
+  const activeMonth = state.cashflowMonth || currentMonthKey();
+  if (!state.cashflowMonth) state.cashflowMonth = activeMonth;
+  const selectedItems = activeMonth ? cashItems.filter((row) => monthKey(row.cash_date) === activeMonth) : [];
+  const outstandingItems = selectedItems.filter((row) => !row.is_paid);
+  const plannedIn = sum(outstandingItems.filter((row) => row.direction === "in"), "gross_cents");
+  const plannedOut = sum(outstandingItems.filter((row) => row.direction === "out"), "gross_cents");
+  const overdue = cashItems.filter((row) => row.cash_date && row.cash_date < todayKey() && !row.is_paid);
+  const paidThisMonth = cashItems.filter((row) => row.is_paid && monthKey(row.paid_at) === activeMonth);
+  const days = cashflowMonthDays(activeMonth, outstandingItems);
+  const actionable = outstandingItems.sort((a, b) => String(a.cash_date).localeCompare(String(b.cash_date)));
+
+  return `
+    ${heading("ETW GROUP / FINANSE", "Płatności i cash flow", "Prognoza wpływów oraz wypływów brutto na podstawie terminów faktur i kosztów firmowych.")}
+    ${monthNavigator("cashflow", activeMonth, months, "płatności")}
+    <section class="metric-grid">
+      ${metric("Planowane wpływy", money(plannedIn), activeMonth ? monthLabel(activeMonth) : "Wybrany miesiąc", "green")}
+      ${metric("Planowane wypływy", money(plannedOut), "FV zakupowe i koszty firmy", "red")}
+      ${metric("Saldo prognozowane", money(plannedIn - plannedOut), "Wpływy − wypływy", plannedIn - plannedOut < 0 ? "red" : "blue")}
+      ${metric("Po terminie", String(overdue.length), overdue.length ? money(sum(overdue, "gross_cents")) : "Brak zaległości", overdue.length ? "red" : "green")}
+    </section>
+    <section class="cashflow-overview">
+      <article class="panel cashflow-calendar"><div class="panel-head"><div><h2>Kalendarz płatności — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Kwoty brutto. Zielone pola oznaczają wpływy, czerwone — wypływy.</p></div></div>${renderCashflowCalendar(days)}</article>
+      <article class="panel cashflow-summary"><div class="panel-head"><div><h2>Stan miesiąca</h2><p>Aktualizuj status po rzeczywistym zaksięgowaniu przelewu.</p></div></div><div class="cashflow-summary-body"><div><span>Pozycje do wykonania</span><strong>${actionable.length}</strong></div><div><span>Opłacone / rozliczone</span><strong>${paidThisMonth.length}</strong></div><div><span>Przepływ netto</span><strong class="${plannedIn - plannedOut < 0 ? "negative" : "positive"}">${money(plannedIn - plannedOut)}</strong></div></div></article>
+    </section>
+    <section class="panel cashflow-list"><div class="panel-head"><div><h2>Plan płatności</h2><p>Oznacz przelew jako opłacony, aby nie pojawiał się w kolejnej prognozie.</p></div></div>${actionable.length ? `<div class="table-wrap"><table><thead><tr><th>Termin</th><th>Kierunek</th><th>Dokument / kontrahent</th><th>Źródło</th><th>Status</th><th>Brutto</th><th></th></tr></thead><tbody>${actionable.map(cashflowRow).join("")}</tbody></table></div>` : emptyState("Brak niezapłaconych pozycji w wybranym miesiącu.")}</section>`;
+}
+
+function renderCashflowCalendar(days) {
+  if (!days.length) return emptyState("Brak terminów płatności w tym miesiącu.");
+  return `<div class="cashflow-days">${days.map((day) => {
+    const hasIn = day.inflow > 0;
+    const hasOut = day.outflow > 0;
+    return `<article class="cashflow-day ${hasIn ? "has-in" : ""} ${hasOut ? "has-out" : ""}"><time>${escapeHtml(date(day.date))}</time><div class="cashflow-day-totals">${hasIn ? `<span class="cashflow-in">+${money(day.inflow)}</span>` : ""}${hasOut ? `<span class="cashflow-out">−${money(day.outflow)}</span>` : ""}</div><small>${day.items.length} ${day.items.length === 1 ? "płatność" : "płatności"}</small></article>`;
+  }).join("")}</div>`;
+}
+
 function renderAlerts() {
   const critical = state.alerts.filter((row) => row.severity === "critical");
   const warnings = state.alerts.filter((row) => row.severity === "warning");
@@ -601,6 +670,7 @@ function renderContractDetail() {
       ${metric("Kaucja pobrana", money(retentionCollected), retentionPercent ? `${percentLabel(retentionPercent)} z faktur sprzedażowych` : "Kaucja nieustawiona", retentionPercent ? "blue" : "yellow")}
     </section>
     <section class="contract-summary panel"><div><p class="eyebrow">STATUS REALIZACJI</p><h2>${statusTag(contract.status)}</h2><p>${escapeHtml(contract.description || "Brak dodatkowego opisu kontraktu.")}</p></div><div class="contract-progress"><strong>${contract.baseline_progress}%</strong><div class="progress"><span style="width:${clampProgress(contract.baseline_progress)}%"></span></div><small>Termin umowny: ${date(contract.due_date)}</small></div></section>
+    ${renderContractBudget(contract, editable)}
     ${isOwner() ? `<section class="panel contract-history"><div class="panel-head"><div><h2>Historia kontraktu</h2><p>Audyt zmian metadanych kontraktu — dostępny wyłącznie dla właściciela.</p></div></div>${state.history.length ? `<div class="history-list">${state.history.map(historyRow).join("")}</div>` : emptyState("Brak zarejestrowanych zmian kontraktu.")}</section>` : ""}
     <section class="panel schedule-panel"><div class="panel-head"><div><h2>Harmonogram kontraktu</h2><p>${state.schedule.length ? `${scheduleDone} z ${state.schedule.length} zadań zakończonych${scheduleDelayed ? ` · ${scheduleDelayed} opóźnionych` : ""}` : "Zadania, terminy i odpowiedzialność za realizację."}</p></div>${editable ? button("+ Dodaj zadanie", "schedule") : ""}</div>${state.schedule.length ? `<div class="table-wrap"><table><thead><tr><th>Zadanie</th><th>Termin</th><th>Odpowiedzialny</th><th>Postęp</th><th>Status</th><th></th></tr></thead><tbody>${state.schedule.map(scheduleRow).join("")}</tbody></table></div>${renderGantt(state.schedule)}` : emptyState("Brak zadań w harmonogramie. Dodaj pierwszy etap realizacji.")}</section>
     <section class="detail-grid">
@@ -653,10 +723,100 @@ function costCategoryCard(category, rows) {
   const matching = rows.filter((row) => normalizeCostCategory(row.category) === category);
   return `<article class="cost-category-card"><p>${escapeHtml(costCategoryLabel(category))}</p><strong>${money(sum(matching, "net_amount_cents"))}</strong><small>${matching.length} ${matching.length === 1 ? "pozycja" : "pozycje"}</small></article>`;
 }
+
+function renderContractBudget(contract, editable) {
+  const categories = contractBudgetCategories();
+  const plans = new Map((state.budgetCategories || []).map((row) => [row.category, row]));
+  const purchaseInvoices = state.invoices.filter((row) => row.invoice_type === "purchase");
+  const rows = categories.map((category) => {
+    const plan = plans.get(category);
+    const planned = Number(plan?.planned_cents || 0);
+    const actual = sum(purchaseInvoices.filter((row) => normalizeContractBudgetCategory(row.contract_budget_category) === category), "net_amount_cents");
+    const remaining = planned - actual;
+    const usedPercent = planned ? Math.round((actual / planned) * 100) : 0;
+    const action = editable ? `<button class="table-action" type="button" data-action="edit-budget-category" data-category="${category}">Ustaw plan</button>` : "";
+    return `<tr><td><strong>${escapeHtml(contractBudgetCategoryLabel(category))}</strong>${plan?.notes ? `<small>${escapeHtml(plan.notes)}</small>` : ""}</td><td class="money">${planned ? money(planned) : "—"}</td><td class="money">${money(actual)}</td><td class="money ${remaining < 0 ? "money-negative" : ""}">${planned ? money(remaining) : "—"}</td><td><div class="budget-progress"><span style="width:${Math.min(100, Math.max(0, usedPercent))}%"></span></div><small>${planned ? `${usedPercent}% wykorzystania` : actual ? "Brak planu" : "—"}</small></td><td class="row-actions">${action}</td></tr>`;
+  });
+  const plannedTotal = sum([...plans.values()], "planned_cents");
+  const actualTotal = sum(purchaseInvoices, "net_amount_cents");
+  return `<section class="panel contract-budget-panel"><div class="panel-head"><div><h2>Budżet kontraktu według kategorii</h2><p>Plan kontra rzeczywiste koszty netto z FV zakupowych przypisanych do tego kontraktu.</p></div><div class="budget-panel-total"><span>Plan kategorii</span><strong>${plannedTotal ? money(plannedTotal) : "Nie ustawiono"}</strong></div></div><div class="table-wrap"><table><thead><tr><th>Kategoria</th><th>Plan netto</th><th>Wykonanie</th><th>Pozostało</th><th>Wykorzystanie</th><th></th></tr></thead><tbody>${rows.join("")}</tbody><tfoot><tr><th>Łącznie</th><th class="money">${plannedTotal ? money(plannedTotal) : money(contract.budget_cents)}</th><th class="money">${money(actualTotal)}</th><th class="money ${(plannedTotal ? plannedTotal : Number(contract.budget_cents || 0)) - actualTotal < 0 ? "money-negative" : ""}">${money((plannedTotal ? plannedTotal : Number(contract.budget_cents || 0)) - actualTotal)}</th><th colspan="2">${plannedTotal ? "Plan kategorii" : "Plan ogólny kontraktu"}</th></tr></tfoot></table></div><p class="panel-note">Koszt przypiszesz do kategorii podczas rozliczania FV zakupowej. Dla wcześniejszych dokumentów domyślną kategorią są „Pozostałe”.</p></section>`;
+}
+
+function contractBudgetCategories() {
+  return ["materialy", "robocizna", "podwykonawcy", "sprzet", "pozostale"];
+}
+
+function contractBudgetCategoryLabel(value) {
+  return ({ materialy: "Materiały", robocizna: "Robocizna", podwykonawcy: "Podwykonawcy", sprzet: "Sprzęt", pozostale: "Pozostałe" })[normalizeContractBudgetCategory(value)] || "Pozostałe";
+}
+
+function normalizeContractBudgetCategory(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return contractBudgetCategories().includes(normalized) ? normalized : "pozostale";
+}
+
+function grossAmountCents(row) {
+  const net = Number(row?.net_amount_cents || 0);
+  const rate = Number(row?.vat_rate || 0);
+  return Math.round(net * (1 + rate / 100));
+}
+
+function cashflowItems(invoices, costs) {
+  const invoiceItems = (invoices || []).map((row) => ({
+    id: row.id,
+    source: "invoice",
+    direction: row.invoice_type === "sales" ? "in" : "out",
+    document_number: row.document_number,
+    counterparty: row.counterparty,
+    cash_date: row.due_date || row.issue_date,
+    paid_at: row.paid_at,
+    is_paid: ["oplacona", "zaksiegowana"].includes(row.payment_status),
+    payment_status: row.payment_status,
+    gross_cents: grossAmountCents(row),
+    source_label: row.invoice_type === "sales" ? "FV sprzedażowa" : "FV zakupowa",
+  }));
+  const costItems = (costs || []).map((row) => ({
+    id: row.id,
+    source: "cost",
+    direction: "out",
+    document_number: row.document_number || row.description || "Koszt firmowy",
+    counterparty: row.vendor,
+    cash_date: row.due_date || row.cost_date,
+    paid_at: row.paid_at,
+    is_paid: ["oplacona", "zaksiegowana"].includes(row.payment_status),
+    payment_status: row.payment_status,
+    gross_cents: grossAmountCents(row),
+    source_label: "Koszt firmowy",
+  }));
+  return [...invoiceItems, ...costItems].filter((row) => row.cash_date);
+}
+
+function cashflowMonthDays(month, rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const day = grouped.get(row.cash_date) || { date: row.cash_date, items: [], inflow: 0, outflow: 0 };
+    day.items.push(row);
+    if (row.direction === "in") day.inflow += Number(row.gross_cents || 0);
+    else day.outflow += Number(row.gross_cents || 0);
+    grouped.set(row.cash_date, day);
+  }
+  return [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function cashflowRow(row) {
+  const isOverdue = row.cash_date < todayKey();
+  const controls = canManageFinance() ? `<button class="table-action ${row.direction === "out" ? "danger" : ""}" type="button" data-action="mark-payment-paid" data-payment-source="${row.source}" data-id="${row.id}">Oznacz jako opłaconą</button>` : "";
+  return `<tr><td>${date(row.cash_date)}${isOverdue ? `<small class="overdue">Po terminie</small>` : ""}</td><td><span class="cashflow-direction ${row.direction === "in" ? "cashflow-in" : "cashflow-out"}">${row.direction === "in" ? "Wpływ" : "Wypływ"}</span></td><td><strong>${escapeHtml(row.document_number || "—")}</strong><small>${escapeHtml(row.counterparty || "—")}</small></td><td>${escapeHtml(row.source_label)}</td><td>${statusTag(row.payment_status)}</td><td class="money ${row.direction === "out" ? "money-negative" : ""}">${row.direction === "in" ? "+" : "−"}${money(row.gross_cents)}</td><td class="row-actions">${controls}</td></tr>`;
+}
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
 function monthNavigator(kind, activeMonth, _groups, noun) {
   const selected = activeMonth || currentMonthKey();
-  const hasNewerMonth = selected < currentMonthKey();
-  return `<section class="month-navigator" aria-label="Nawigacja miesięczna ${escapeHtml(noun)}"><button class="month-button" type="button" data-action="${kind}-month-previous" aria-label="Poprzedni miesiąc">←</button><div><p>WYBRANY MIESIĄC</p><input class="month-picker" type="month" data-month-picker="${kind}" value="${selected}" max="${currentMonthKey()}" aria-label="Wybierz miesiąc" /><small>${escapeHtml(noun)} w wybranym okresie</small></div><button class="month-button" type="button" data-action="${kind}-month-next" ${hasNewerMonth ? "" : "disabled"} aria-label="Następny miesiąc">→</button></section>`;
+  const lastAvailable = kind === "cashflow" ? shiftMonth(currentMonthKey(), 12) : currentMonthKey();
+  const hasNewerMonth = selected < lastAvailable;
+  return `<section class="month-navigator" aria-label="Nawigacja miesięczna ${escapeHtml(noun)}"><button class="month-button" type="button" data-action="${kind}-month-previous" aria-label="Poprzedni miesiąc">←</button><div><p>WYBRANY MIESIĄC</p><input class="month-picker" type="month" data-month-picker="${kind}" value="${selected}" max="${lastAvailable}" aria-label="Wybierz miesiąc" /><small>${escapeHtml(noun)} w wybranym okresie</small></div><button class="month-button" type="button" data-action="${kind}-month-next" ${hasNewerMonth ? "" : "disabled"} aria-label="Następny miesiąc">→</button></section>`;
 }
 
 function contractRow(row) {
@@ -673,11 +833,12 @@ function settlementRow(row) {
 }
 function invoiceRow(row) {
   const assignment = invoiceAssignmentSummary(row);
+  const attachments = invoiceAttachmentCount(row.id);
   const preview = row.source === "ksef" && row.ksef_number && canManageFinance()
     ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
     : "";
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
-  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
+  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="invoice-attachments" data-id="${row.id}">Załączniki${attachments ? ` (${attachments})` : ""}</button><button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF DEMO" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function renderKsefPreview(activeMonth) {
@@ -708,9 +869,13 @@ function detailInvoiceRow(row) {
     ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
     : "";
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
-  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
+  const attachments = invoiceAttachmentCount(row.id);
+  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="invoice-attachments" data-id="${row.id}">Załączniki${attachments ? ` (${attachments})` : ""}</button><button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   const retention = row.invoice_type === "sales" ? retentionAmount(row.net_amount_cents, state.contractDetail?.retention_percent) : 0;
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}${row.allocation_portion ? " · część FV" : ""}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${row.invoice_type === "sales" ? money(retention) : "—"}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+}
+function invoiceAttachmentCount(invoiceId) {
+  return (state.invoiceAttachments || []).filter((row) => row.invoice_id === invoiceId).length;
 }
 function invoiceRuleRow(row) {
   const match = [row.match_nip ? `NIP: ${row.match_nip}` : "", row.match_text ? `Tekst: ${row.match_text}` : ""].filter(Boolean).join(" · ");
@@ -775,7 +940,7 @@ function invoicePortionsForContract(contractId, invoices, allocations) {
     if (splits.length) {
       for (const allocation of splits) {
         if (allocation.target_type !== "contract" || allocation.contract_id !== contractId) continue;
-        portions.push({ ...invoice, net_amount_cents: allocation.net_amount_cents, allocation_portion: true, allocation_id: allocation.id });
+        portions.push({ ...invoice, net_amount_cents: allocation.net_amount_cents, contract_budget_category: allocation.budget_category || invoice.contract_budget_category || "pozostale", allocation_portion: true, allocation_id: allocation.id });
       }
       continue;
     }
@@ -838,8 +1003,8 @@ function userRow(row) {
 }
 
 function openEntryModal(mode, record = null) {
-  if (["contract", "settlement", "change", "document", "schedule"].includes(mode) && !canManageContracts()) return;
-  if (["invoice", "cost", "invoice-rule"].includes(mode) && !canManageFinance()) return;
+  if (["contract", "settlement", "change", "document", "schedule", "budget-category"].includes(mode) && !canManageContracts()) return;
+  if (["invoice", "cost", "invoice-rule", "invoice-attachment"].includes(mode) && !canManageFinance()) return;
   if (["invite", "manage-user"].includes(mode) && !isOwner()) return;
   if (["change", "document", "schedule"].includes(mode) && !state.contractDetail?.id) return;
   state.modalMode = mode;
@@ -909,10 +1074,12 @@ function formDefinition(mode, record) {
       field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
       field("Przypisanie", select("allocation", options([["unassigned", "Do przypisania"], ["contract", "Kontrakt"], ["company", "Koszt firmowy"]], record.allocation || (state.activeView === "contractDetail" ? "contract" : "unassigned")))),
       field("Kontrakt (gdy przypisanie: kontrakt)", select("contract_id", contractSelect)),
+      field("Kategoria budżetu (gdy kontrakt)", select("contract_budget_category", options([["materialy", "Materiały"], ["robocizna", "Robocizna"], ["podwykonawcy", "Podwykonawcy"], ["sprzet", "Sprzęt"], ["pozostale", "Pozostałe"]], normalizeContractBudgetCategory(record.contract_budget_category || "pozostale")))),
       field("Kategoria firmowa (gdy koszt firmowy)", select("company_category", options([[
         "", "Wybierz kategorię"
       ], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.company_category || "")))),
       field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
+      field("Data opłacenia / zaksięgowania", input("paid_at", "date", record.paid_at)),
     ].join("")
   };
   if (mode === "invoice-rule") return {
@@ -937,7 +1104,9 @@ function formDefinition(mode, record) {
       field("Numer dokumentu", input("document_number", "text", record.document_number)),
       field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
       field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
+      field("Termin płatności", input("due_date", "date", record.due_date)),
       field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
+      field("Data opłacenia / zaksięgowania", input("paid_at", "date", record.paid_at)),
     ].join("")
   };
   if (mode === "change") return {
@@ -963,6 +1132,15 @@ function formDefinition(mode, record) {
     ].join("")
   };
   if (mode === "document") return { eyebrow: "DOKUMENT KONTRAKTU", title: "Dodaj dokument", fields: field("Plik (PDF, JPG, PNG lub XLSX; maks. 10 MB)", `<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />`, "full") };
+  if (mode === "invoice-attachment") return { eyebrow: "ZAŁĄCZNIK DO FAKTURY", title: "Dodaj załącznik", fields: [
+      field("Nazwa pomocnicza (opcjonalnie)", input("label", "text", "", "placeholder=\"np. skan podpisanej FV\""), "full"),
+      field("Plik (PDF, JPG, PNG, WEBP; maks. 15 MB)", `<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required />`, "full"),
+    ].join("") };
+  if (mode === "budget-category") return { eyebrow: "BUDŻET KONTRAKTU", title: `Plan: ${contractBudgetCategoryLabel(record.category)}`, fields: [
+      field("Kategoria", select("category", options(contractBudgetCategories().map((category) => [category, contractBudgetCategoryLabel(category)]), normalizeContractBudgetCategory(record.category))), "required"),
+      field("Plan kosztów netto (zł)", moneyInput("planned_amount", record.id ? moneyValue(record.planned_cents) : "")),
+      field("Notatka (opcjonalnie)", `<textarea name="notes" placeholder="Założenia kosztowe, limit lub ustalenie…">${escapeHtml(record.notes || "")}</textarea>`, "full"),
+    ].join("") };
   if (mode === "invite") return { eyebrow: "NOWE KONTO", title: "Utwórz konto użytkownika", fields: [
       field("Imię i nazwisko", input("full_name", "text", "", "required")),
       field("Firmowy e-mail", input("email", "email", "", "autocomplete=\"off\" required")),
@@ -989,6 +1167,7 @@ entryForm.addEventListener("submit", async (event) => {
     submit.disabled = true;
     submit.textContent = "Zapisywanie…";
     if (mode === "document") await saveDocument(form);
+    else if (mode === "invoice-attachment") await saveInvoiceAttachment(form);
     else if (mode === "invite") await createUser(form);
     else if (mode === "manage-user") await updateUser(form, record);
     else {
@@ -1015,6 +1194,24 @@ document.querySelector("#modal-close").addEventListener("click", () => modal.clo
 document.querySelector("#modal-cancel").addEventListener("click", () => modal.close());
 document.querySelector("#invoice-preview-close").addEventListener("click", () => invoicePreviewModal?.close());
 document.querySelector("#invoice-preview-dismiss").addEventListener("click", () => invoicePreviewModal?.close());
+document.querySelector("#invoice-attachments-close")?.addEventListener("click", () => invoiceAttachmentsModal?.close());
+invoiceAttachmentsContent?.addEventListener("click", async (event) => {
+  const element = event.target.closest("[data-invoice-attachment-action]");
+  if (!element) return;
+  try {
+    const action = element.dataset.invoiceAttachmentAction;
+    const id = element.dataset.id;
+    if (action === "upload") {
+      invoiceAttachmentsModal?.close();
+      openEntryModal("invoice-attachment");
+    }
+    if (action === "download") await downloadInvoiceAttachment(id);
+    if (action === "queue-ocr") await updateInvoiceAttachmentOcr(id);
+    if (action === "delete") await deleteInvoiceAttachment(id);
+  } catch (error) {
+    window.alert(error.message || "Nie udało się wykonać operacji na załączniku.");
+  }
+});
 document.querySelector("#invoice-preview-download").addEventListener("click", () => {
   try {
     downloadKsefInvoicePdf();
@@ -1110,11 +1307,12 @@ function openInvoiceAllocationModal(invoiceId) {
 
   const existingAllocations = invoiceAllocationsFor(invoiceId);
   const initialRows = existingAllocations.length
-    ? existingAllocations.map((row) => ({ targetType: row.target_type, contractId: row.contract_id || "", category: row.company_category || "", amountCents: Number(row.net_amount_cents || 0) }))
+    ? existingAllocations.map((row) => ({ targetType: row.target_type, contractId: row.contract_id || "", category: row.company_category || "", budgetCategory: row.budget_category || "pozostale", amountCents: Number(row.net_amount_cents || 0) }))
     : [{
       targetType: invoice.allocation === "company" ? "company" : "contract",
       contractId: invoice.allocation === "contract" ? invoice.contract_id || "" : state.contractDetail?.id || "",
       category: invoice.allocation === "company" ? invoice.company_category || "pozostale" : "",
+      budgetCategory: invoice.allocation === "contract" ? invoice.contract_budget_category || "pozostale" : "pozostale",
       amountCents: Number(invoice.net_amount_cents || 0),
     }];
   renderInvoiceAllocationRows(initialRows);
@@ -1122,7 +1320,7 @@ function openInvoiceAllocationModal(invoiceId) {
 }
 
 function defaultInvoiceAllocationRow() {
-  return { targetType: "contract", contractId: state.contractDetail?.id || "", category: "", amountCents: 0 };
+  return { targetType: "contract", contractId: state.contractDetail?.id || "", category: "", budgetCategory: "pozostale", amountCents: 0 };
 }
 
 function invoiceAllocationContractOptions(selected = "") {
@@ -1137,11 +1335,17 @@ function invoiceAllocationCategoryOptions(selected = "") {
     .map(([value, label]) => `<option value="${value}" ${value === normalizeCostCategory(selected || "") ? "selected" : ""}>${label}</option>`).join("");
 }
 
+function invoiceAllocationBudgetCategoryOptions(selected = "pozostale") {
+  return contractBudgetCategories()
+    .map((category) => `<option value="${category}" ${category === normalizeContractBudgetCategory(selected) ? "selected" : ""}>${escapeHtml(contractBudgetCategoryLabel(category))}</option>`).join("");
+}
+
 function renderInvoiceAllocationRows(rows) {
   if (!invoiceAllocationRows) return;
   invoiceAllocationRows.innerHTML = rows.map((row, index) => `<div class="invoice-allocation-row" data-allocation-row>
     <label>Cel<select name="target_type"><option value="contract" ${row.targetType === "contract" ? "selected" : ""}>Kontrakt</option><option value="company" ${row.targetType === "company" ? "selected" : ""}>Koszt firmowy</option></select></label>
     <label class="${row.targetType !== "contract" ? "is-disabled" : ""}">Kontrakt<select name="contract_id" ${row.targetType !== "contract" ? "disabled" : ""}>${invoiceAllocationContractOptions(row.targetType === "contract" ? row.contractId : "")}</select></label>
+    <label class="${row.targetType !== "contract" ? "is-disabled" : ""}">Budżet kontraktu<select name="budget_category" ${row.targetType !== "contract" ? "disabled" : ""}>${invoiceAllocationBudgetCategoryOptions(row.targetType === "contract" ? row.budgetCategory : "pozostale")}</select></label>
     <label class="${row.targetType !== "company" ? "is-disabled" : ""}">Kategoria firmowa<select name="company_category" ${row.targetType !== "company" ? "disabled" : ""}>${invoiceAllocationCategoryOptions(row.targetType === "company" ? row.category : "")}</select></label>
     <label>Netto (zł)<input name="amount" type="number" min="0.01" step="0.01" value="${escapeHtml((Number(row.amountCents || 0) / 100).toFixed(2))}" /></label>
     <button class="allocation-remove" type="button" data-allocation-remove="${index}" aria-label="Usuń część">×</button>
@@ -1154,6 +1358,7 @@ function readInvoiceAllocationRows() {
   return [...invoiceAllocationRows.querySelectorAll("[data-allocation-row]")].map((row) => ({
     targetType: String(row.querySelector("[name=target_type]")?.value || "contract"),
     contractId: String(row.querySelector("[name=contract_id]")?.value || ""),
+    budgetCategory: String(row.querySelector("[name=budget_category]")?.value || "pozostale"),
     category: String(row.querySelector("[name=company_category]")?.value || ""),
     amountCents: toCents(String(row.querySelector("[name=amount]")?.value || "0")),
   }));
@@ -1192,12 +1397,13 @@ async function saveInvoiceAllocations() {
     target_type: row.targetType,
     contract_id: row.targetType === "contract" ? row.contractId : null,
     company_category: row.targetType === "company" ? normalizeCostCategory(row.category) : null,
+    budget_category: row.targetType === "contract" ? normalizeContractBudgetCategory(row.budgetCategory) : null,
     net_amount_cents: row.amountCents,
     created_by: state.user.id,
   }));
   const { error: insertError } = await state.supabase.from("invoice_allocations").insert(payload);
   if (insertError) throw insertError;
-  const { error: invoiceError } = await state.supabase.from("invoices").update({ allocation: "unassigned", contract_id: null, company_category: null }).eq("id", invoice.id);
+  const { error: invoiceError } = await state.supabase.from("invoices").update({ allocation: "unassigned", contract_id: null, company_category: null, contract_budget_category: null }).eq("id", invoice.id);
   if (invoiceError) throw invoiceError;
 }
 
@@ -1259,9 +1465,11 @@ function formPayload(mode, form) {
     const allocation = value("allocation");
     const contractId = value("contract_id");
     const category = value("company_category");
+    const paymentStatus = value("payment_status");
+    const paidAt = ["oplacona", "zaksiegowana"].includes(paymentStatus) ? (value("paid_at") || todayKey()) : null;
     if (allocation === "contract" && !contractId) throw new Error("Wybierz kontrakt dla tego przypisania.");
     if (allocation === "company" && !category) throw new Error("Podaj kategorię kosztu firmowego.");
-    return { table: "invoices", payload: { invoice_type: value("invoice_type"), source: value("source"), document_number: value("document_number"), counterparty: value("counterparty"), counterparty_nip: normalizeNip(value("counterparty_nip")) || null, issue_date: value("issue_date"), due_date: value("due_date") || null, net_amount_cents: number("net_amount"), vat_rate: vat(), allocation, contract_id: allocation === "contract" ? contractId : null, company_category: allocation === "company" ? category : null, payment_status: value("payment_status") } };
+    return { table: "invoices", payload: { invoice_type: value("invoice_type"), source: value("source"), document_number: value("document_number"), counterparty: value("counterparty"), counterparty_nip: normalizeNip(value("counterparty_nip")) || null, issue_date: value("issue_date"), due_date: value("due_date") || null, paid_at: paidAt, net_amount_cents: number("net_amount"), vat_rate: vat(), allocation, contract_id: allocation === "contract" ? contractId : null, company_category: allocation === "company" ? category : null, contract_budget_category: allocation === "contract" ? normalizeContractBudgetCategory(value("contract_budget_category")) : null, payment_status: paymentStatus } };
   }
   if (mode === "invoice-rule") {
     const targetType = value("target_type");
@@ -1276,7 +1484,14 @@ function formPayload(mode, form) {
     if (targetType === "company" && !category) throw new Error("Wybierz kategorię firmową będącą celem reguły.");
     return { table: "invoice_assignment_rules", payload: { name: value("name"), active: form.get("active") === "on", priority, invoice_type: value("invoice_type") || null, match_nip: nip || null, match_text: matchText || null, target_type: targetType, contract_id: targetType === "contract" ? contractId : null, company_category: targetType === "company" ? category : null } };
   }
-  if (mode === "cost") return { table: "company_costs", payload: { cost_date: value("cost_date"), category: value("category"), description: value("description"), vendor: value("vendor"), document_number: value("document_number"), net_amount_cents: number("net_amount"), vat_rate: vat(), payment_status: value("payment_status") } };
+  if (mode === "cost") {
+    const paymentStatus = value("payment_status");
+    return { table: "company_costs", payload: { cost_date: value("cost_date"), due_date: value("due_date") || null, paid_at: ["oplacona", "zaksiegowana"].includes(paymentStatus) ? (value("paid_at") || todayKey()) : null, category: value("category"), description: value("description"), vendor: value("vendor"), document_number: value("document_number"), net_amount_cents: number("net_amount"), vat_rate: vat(), payment_status: paymentStatus } };
+  }
+  if (mode === "budget-category") {
+    if (!state.contractDetail?.id) throw new Error("Otwórz kartę kontraktu przed ustawieniem budżetu kategorii.");
+    return { table: "contract_budget_categories", payload: { contract_id: state.contractDetail.id, category: normalizeContractBudgetCategory(value("category")), planned_cents: number("planned_amount"), notes: value("notes") } };
+  }
   if (mode === "change") return { table: "contract_changes", payload: { contract_id: state.contractDetail.id, kind: value("kind"), title: value("title"), description: value("description"), net_amount_cents: toSignedCents(value("net_amount")), due_date: value("due_date") || null } };
   if (mode === "schedule") {
     const startDate = value("start_date") || null;
@@ -1293,12 +1508,13 @@ async function handleAction(element) {
   const action = element.dataset.action;
   const id = element.dataset.id;
   try {
-    if (["invoice-month-previous", "invoice-month-next", "cost-month-previous", "cost-month-next"].includes(action)) {
-      const isInvoice = action.startsWith("invoice-");
-      const stateKey = isInvoice ? "invoiceMonth" : "costMonth";
+    if (["invoice-month-previous", "invoice-month-next", "cost-month-previous", "cost-month-next", "cashflow-month-previous", "cashflow-month-next"].includes(action)) {
+      const kind = action.split("-month-")[0];
+      const stateKey = ({ invoice: "invoiceMonth", cost: "costMonth", cashflow: "cashflowMonth" })[kind];
       const direction = action.endsWith("previous") ? -1 : 1;
       const nextMonth = shiftMonth(state[stateKey] || currentMonthKey(), direction);
-      if (nextMonth <= currentMonthKey()) state[stateKey] = nextMonth;
+      const maxMonth = kind === "cashflow" ? shiftMonth(currentMonthKey(), 12) : currentMonthKey();
+      if (nextMonth <= maxMonth) state[stateKey] = nextMonth;
       return await loadView(state.supabase);
     }
     if (action === "invoice-type-filter") {
@@ -1314,6 +1530,14 @@ async function handleAction(element) {
       return;
     }
     if (action === "allocate-invoice") return openInvoiceAllocationModal(id);
+    if (action === "edit-budget-category") {
+      if (!canManageContracts()) throw new Error("Brak uprawnień do edycji budżetu kontraktu.");
+      const category = normalizeContractBudgetCategory(element.dataset.category);
+      const existing = state.budgetCategories.find((row) => row.category === category);
+      return openEntryModal("budget-category", existing || { contract_id: state.contractDetail?.id, category });
+    }
+    if (action === "invoice-attachments") return openInvoiceAttachmentsModal(id);
+    if (action === "mark-payment-paid") return await markPaymentPaid(element.dataset.paymentSource, id);
     if (action === "edit-invoice-rule") {
       const rule = state.invoiceRules.find((row) => row.id === id);
       if (rule) openEntryModal("invoice-rule", rule);
@@ -1406,6 +1630,96 @@ async function deleteInvoiceWithPassword(password) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Nie udało się usunąć faktury.");
+}
+
+function openInvoiceAttachmentsModal(invoiceId) {
+  if (!invoiceAttachmentsModal || !invoiceAttachmentsContent) throw new Error("Nie można otworzyć załączników faktury.");
+  const invoice = state.invoices.find((row) => row.id === invoiceId);
+  if (!invoice) throw new Error("Nie znaleziono faktury.");
+  state.pendingInvoiceAttachmentId = invoiceId;
+  const files = (state.invoiceAttachments || []).filter((row) => row.invoice_id === invoiceId);
+  invoiceAttachmentsContent.innerHTML = `<div class="invoice-attachments-heading"><div><p class="eyebrow">DOKUMENTY DO FAKTURY</p><h3>${escapeHtml(invoice.document_number)}</h3><p>${escapeHtml(invoice.counterparty || "Brak kontrahenta")}</p></div>${canManageFinance() ? `<button class="button button-primary" type="button" data-invoice-attachment-action="upload">+ Dodaj plik</button>` : ""}</div><div class="invoice-attachments-ocr-note"><strong>OCR</strong><span>Pliki są gotowe do odczytu. Kolejka OCR jest zapisywana w PrądPlan; automatyczne odczytywanie wymaga późniejszego podłączenia dostawcy OCR.</span></div>${files.length ? `<div class="invoice-attachment-list">${files.map(invoiceAttachmentRow).join("")}</div>` : emptyState("Nie dodano jeszcze załączników do tej faktury.")}`;
+  if (!invoiceAttachmentsModal.open) invoiceAttachmentsModal.showModal();
+}
+
+function invoiceAttachmentRow(row) {
+  const controls = `<button class="table-action" type="button" data-invoice-attachment-action="download" data-id="${row.id}">Otwórz</button>${canManageFinance() ? `${row.ocr_status === "not_requested" ? `<button class="table-action" type="button" data-invoice-attachment-action="queue-ocr" data-id="${row.id}">Do OCR</button>` : ""}<button class="table-action danger" type="button" data-invoice-attachment-action="delete" data-id="${row.id}">Usuń</button>` : ""}`;
+  return `<article class="invoice-attachment-row"><div><strong>${escapeHtml(row.label || row.file_name)}</strong><small>${escapeHtml(row.file_name)} · ${fileSize(row.size_bytes)} · ${dateTime(row.created_at)}</small></div><div class="row-actions"><span class="tag ${ocrStatusClass(row.ocr_status)}">${escapeHtml(ocrStatusLabel(row.ocr_status))}</span>${controls}</div></article>`;
+}
+
+function ocrStatusLabel(value) {
+  return ({ not_requested: "Gotowe do OCR", queued: "W kolejce OCR", completed: "Odczytano", failed: "Błąd OCR" })[value] || "Gotowe do OCR";
+}
+
+function ocrStatusClass(value) {
+  return ({ not_requested: "tag-yellow", queued: "tag-blue", completed: "tag-green", failed: "tag-red" })[value] || "tag-yellow";
+}
+
+async function saveInvoiceAttachment(form) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do dodawania załączników FV.");
+  const invoiceId = state.pendingInvoiceAttachmentId;
+  if (!invoiceId) throw new Error("Najpierw wybierz fakturę.");
+  const file = form.get("file");
+  if (!(file instanceof File) || !file.size) throw new Error("Wybierz plik do wysłania.");
+  if (file.size > 15728640) throw new Error("Plik jest większy niż dozwolone 15 MB.");
+  const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+  if (!allowedTypes.includes(file.type)) throw new Error("Dozwolone są wyłącznie pliki PDF, JPG, PNG i WEBP.");
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "zalacznik";
+  const unique = globalThis.crypto?.randomUUID?.() || String(Date.now());
+  const storagePath = `${invoiceId}/${unique}-${safeName}`;
+  const { error: uploadError } = await state.supabase.storage.from("invoice-attachments").upload(storagePath, file, { contentType: file.type, upsert: false });
+  if (uploadError) throw uploadError;
+  const { error: recordError } = await state.supabase.from("invoice_attachments").insert({
+    invoice_id: invoiceId,
+    file_name: file.name,
+    storage_path: storagePath,
+    mime_type: file.type,
+    size_bytes: file.size,
+    label: String(form.get("label") || "").trim(),
+    uploaded_by: state.user.id,
+  });
+  if (recordError) {
+    await state.supabase.storage.from("invoice-attachments").remove([storagePath]);
+    throw recordError;
+  }
+}
+
+async function downloadInvoiceAttachment(id) {
+  const attachment = state.invoiceAttachments.find((row) => row.id === id);
+  if (!attachment) throw new Error("Nie znaleziono załącznika.");
+  const { data, error } = await state.supabase.storage.from("invoice-attachments").createSignedUrl(attachment.storage_path, 60);
+  if (error) throw error;
+  window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+}
+
+async function updateInvoiceAttachmentOcr(id) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do kolejki OCR.");
+  const { error } = await state.supabase.from("invoice_attachments").update({ ocr_status: "queued" }).eq("id", id);
+  if (error) throw error;
+  const attachment = state.invoiceAttachments.find((row) => row.id === id);
+  if (attachment) attachment.ocr_status = "queued";
+  if (state.pendingInvoiceAttachmentId) openInvoiceAttachmentsModal(state.pendingInvoiceAttachmentId);
+}
+
+async function deleteInvoiceAttachment(id) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do usuwania załączników FV.");
+  const attachment = state.invoiceAttachments.find((row) => row.id === id);
+  if (!attachment) throw new Error("Nie znaleziono załącznika.");
+  if (!window.confirm(`Czy na pewno usunąć plik „${attachment.file_name}”?`)) return;
+  const { error: storageError } = await state.supabase.storage.from("invoice-attachments").remove([attachment.storage_path]);
+  if (storageError) throw storageError;
+  const { error } = await state.supabase.from("invoice_attachments").delete().eq("id", id);
+  if (error) throw error;
+  state.invoiceAttachments = state.invoiceAttachments.filter((row) => row.id !== id);
+  if (state.pendingInvoiceAttachmentId) openInvoiceAttachmentsModal(state.pendingInvoiceAttachmentId);
+}
+
+async function markPaymentPaid(source, id) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do zmiany statusu płatności.");
+  const table = source === "cost" ? "company_costs" : "invoices";
+  const { error } = await state.supabase.from(table).update({ payment_status: "oplacona", paid_at: todayKey() }).eq("id", id);
+  if (error) throw error;
+  await loadView(state.supabase);
 }
 
 async function downloadDocument(id) {
