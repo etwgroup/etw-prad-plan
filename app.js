@@ -311,7 +311,7 @@ async function loadView(supabase) {
       page.innerHTML = renderInvoices();
     }
     if (state.activeView === "costs") {
-      state.costs = await selectRows(supabase, "company_costs", "id, cost_date, due_date, paid_at, category, description, vendor, document_number, net_amount_cents, vat_rate, payment_status", "cost_date", false);
+      await loadCostsData(supabase);
       page.innerHTML = renderCosts();
     }
     if (state.activeView === "cashflow") {
@@ -387,6 +387,17 @@ async function loadInvoiceData(supabase) {
   state.invoiceAllocations = invoiceAllocations;
   state.invoiceRules = invoiceRules;
   state.invoiceAttachments = invoiceAttachments;
+}
+
+async function loadCostsData(supabase) {
+  const [costs, invoices, invoiceAllocations] = await Promise.all([
+    selectRows(supabase, "company_costs", "id, cost_date, due_date, paid_at, category, description, vendor, document_number, net_amount_cents, vat_rate, payment_status", "cost_date", false),
+    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, ksef_environment, counterparty, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, company_category, payment_status", "issue_date", false),
+    selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, company_category, net_amount_cents", "created_at", false),
+  ]);
+  state.costs = costs;
+  state.invoices = invoices;
+  state.invoiceAllocations = invoiceAllocations;
 }
 
 async function loadContractDetailData(supabase) {
@@ -612,11 +623,12 @@ function renderInvoiceRules(canManage) {
 function renderCosts() {
   const canAdd = canManageFinance();
   const categories = ["paliwo", "narzedzia", "ubior_bhp", "najem_lokali", "pozostale"];
-  const monthlyCosts = groupRowsByMonth(state.costs, "cost_date");
+  const allCompanyCosts = companyCostEntries();
+  const monthlyCosts = groupRowsByMonth(allCompanyCosts, "cost_date");
   const activeMonth = selectedMonthKey("costMonth", monthlyCosts);
-  const visibleCosts = activeMonth ? state.costs.filter((row) => monthKey(row.cost_date) === activeMonth) : [];
+  const visibleCosts = activeMonth ? allCompanyCosts.filter((row) => monthKey(row.cost_date) === activeMonth) : [];
   return `
-    ${heading("ETW GROUP / FINANSE", "Koszty firmowe", "Koszty ogólne niezwiązane z konkretnym kontraktem, podzielone na pięć kategorii firmowych.", canAdd ? button("+ Dodaj koszt", "cost") : "")}
+    ${heading("ETW GROUP / FINANSE", "Koszty firmowe", "Ręczne koszty oraz części FV zakupowych rozliczone jako koszt firmowy — bez powiązania z konkretnym kontraktem.", canAdd ? button("+ Dodaj koszt", "cost") : "")}
     ${monthNavigator("cost", activeMonth, monthlyCosts, "kosztów")}
     <section class="metric-grid">
       ${metric("Pozycje", String(visibleCosts.length), activeMonth ? monthLabel(activeMonth) : "Brak danych", "yellow")}
@@ -626,9 +638,61 @@ function renderCosts() {
     </section>
     <section class="cost-breakdown" aria-label="Podział kosztów firmowych">${categories.map((category) => costCategoryCard(category, visibleCosts)).join("")}</section>
     <section class="panel">
-      <div class="panel-head"><div><h2>Rejestr kosztów — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Pozycje nie są doliczane do budżetu pojedynczego kontraktu.</p></div></div>
-      ${visibleCosts.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${visibleCosts.map(costRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów w wybranym miesiącu.")}
+      <div class="panel-head"><div><h2>Rejestr kosztów — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Pozycje nie są doliczane do budżetu pojedynczego kontraktu. FV rozliczone częściowo pokazują wyłącznie przypisaną kwotę netto.</p></div></div>
+      ${visibleCosts.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Źródło</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${visibleCosts.map(companyCostRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów w wybranym miesiącu.")}
     </section>`;
+}
+
+function companyCostEntries() {
+  const invoices = state.invoices || [];
+  const allocations = state.invoiceAllocations || [];
+  const invoicesById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
+  const invoiceIdsWithSplits = new Set(allocations.map((allocation) => allocation.invoice_id));
+
+  const manualCosts = (state.costs || []).map((cost) => ({
+    ...cost,
+    entry_type: "manual_cost",
+  }));
+
+  const allocatedInvoiceCosts = allocations
+    .filter((allocation) => allocation.target_type === "company")
+    .map((allocation) => {
+      const invoice = invoicesById.get(allocation.invoice_id);
+      if (!invoice || invoice.invoice_type !== "purchase" || invoiceIsCorrection(invoice)) return null;
+      return invoiceCompanyCostEntry(invoice, allocation.net_amount_cents, allocation.company_category, allocation.id);
+    })
+    .filter(Boolean);
+
+  // Obsługuje również faktury przypisane w starszym, jednolitym trybie,
+  // zanim wprowadzono podział jednej FV na wiele części.
+  const directInvoiceCosts = invoices
+    .filter((invoice) => invoice.invoice_type === "purchase"
+      && !invoiceIsCorrection(invoice)
+      && invoice.allocation === "company"
+      && !invoiceIdsWithSplits.has(invoice.id))
+    .map((invoice) => invoiceCompanyCostEntry(invoice, invoice.net_amount_cents, invoice.company_category));
+
+  return [...manualCosts, ...allocatedInvoiceCosts, ...directInvoiceCosts]
+    .sort((left, right) => String(right.cost_date || "").localeCompare(String(left.cost_date || "")));
+}
+
+function invoiceCompanyCostEntry(invoice, amountCents, category, allocationId = "") {
+  return {
+    id: allocationId ? `invoice-allocation:${allocationId}` : `invoice:${invoice.id}`,
+    entry_type: "invoice_cost",
+    invoice,
+    invoice_id: invoice.id,
+    cost_date: invoice.issue_date,
+    due_date: invoice.due_date,
+    paid_at: invoice.paid_at,
+    category: normalizeCostCategory(category),
+    description: "FV zakupowa rozliczona jako koszt firmowy",
+    vendor: invoice.counterparty,
+    document_number: invoice.document_number,
+    net_amount_cents: Number(amountCents || 0),
+    vat_rate: invoice.vat_rate,
+    payment_status: invoice.payment_status,
+  };
 }
 
 function renderCashflow() {
@@ -915,9 +979,26 @@ function ksefPreviewRow(row, alreadyImported) {
     : `<input type="checkbox" data-ksef-select="${escapeHtml(row.ksefNumber)}" ${state.ksefSelectedNumbers.has(row.ksefNumber) ? "checked" : ""} aria-label="Wybierz fakturę ${escapeHtml(row.documentNumber || row.ksefNumber)} do importu" />`;
   return `<tr><td>${checkbox}</td><td>${row.type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td><strong>${escapeHtml(row.documentNumber || "—")}</strong></td><td><small>${escapeHtml(row.ksefNumber || "—")}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td>${date(row.issueDate)}</td><td class="money">${moneyKsef(row.netAmount, row.currency)}</td><td class="money">${moneyKsef(row.vatAmount, row.currency)}</td><td class="money">${moneyKsef(row.grossAmount, row.currency)}</td></tr>`;
 }
+function companyCostRow(row) {
+  if (row.entry_type === "invoice_cost") return invoiceCostRow(row);
+  return costRow(row);
+}
+
 function costRow(row) {
   const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-cost" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-cost" data-id="${row.id}">Usuń</button>` : "";
-  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(costCategoryLabel(row.category))}</td><td><strong>${escapeHtml(row.description || "—")}</strong></td><td>${escapeHtml(row.vendor || "—")}</td><td>${escapeHtml(row.document_number || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(costCategoryLabel(row.category))}</td><td><strong>${escapeHtml(row.description || "—")}</strong></td><td>${escapeHtml(row.vendor || "—")}</td><td>${escapeHtml(row.document_number || "—")}</td><td><span class="tag tag-blue">Ręczny koszt</span></td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+}
+
+function invoiceCostRow(row) {
+  const invoice = row.invoice;
+  const preview = invoice.source === "ksef" && invoice.ksef_number && canManageFinance()
+    ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${invoice.id}">Podgląd</button>`
+    : "";
+  const controls = canManageFinance()
+    ? `${preview}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${invoice.id}">Rozlicz</button>`
+    : "";
+  const source = invoice.source === "ksef" ? invoiceSourceLabel(invoice) : "FV ręczna";
+  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(costCategoryLabel(row.category))}</td><td><strong>${escapeHtml(row.description)}</strong><small>${row.net_amount_cents !== invoice.net_amount_cents ? `Część FV: ${money(row.net_amount_cents)}` : "Cała kwota FV"}</small></td><td>${escapeHtml(row.vendor || "—")}</td><td><strong>${escapeHtml(row.document_number || "—")}</strong></td><td><span class="tag tag-yellow">${escapeHtml(source)}</span></td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function detailSettlementRow(row) {
   const controls = canManageContracts() ? `<button class="table-action" type="button" data-action="edit-settlement" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-settlement" data-id="${row.id}">Usuń</button>` : "";
