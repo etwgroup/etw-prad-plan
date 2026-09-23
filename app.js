@@ -58,7 +58,6 @@ const state = {
   documents: [],
   schedule: [],
   alerts: [],
-  importRuns: [],
   invoiceMonth: "",
   invoiceTypeFilter: "all",
   costMonth: "",
@@ -373,17 +372,15 @@ async function loadSettlementData(supabase) {
 }
 
 async function loadInvoiceData(supabase) {
-  const [contracts, invoices, importRuns, invoiceAllocations, invoiceRules, invoiceAttachments] = await Promise.all([
+  const [contracts, invoices, invoiceAllocations, invoiceRules, invoiceAttachments] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
     selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, ksef_environment, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status, contracts(name)", "issue_date", false),
-    canManageFinance() ? selectRows(supabase, "invoice_import_runs", "id, status, environment, imported_count, skipped_count, error_message, created_at, finished_at", "created_at", false) : Promise.resolve([]),
     selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, budget_category, net_amount_cents", "created_at", false),
     canManageFinance() ? selectRows(supabase, "invoice_assignment_rules", "id, name, active, priority, invoice_type, match_nip, match_text, target_type, contract_id, company_category, contracts(name)", "priority", true) : Promise.resolve([]),
     selectRows(supabase, "invoice_attachments", "id, invoice_id, file_name, storage_path, mime_type, size_bytes, label, ocr_status, created_at", "created_at", false),
   ]);
   state.contracts = contracts;
   state.invoices = invoices;
-  state.importRuns = importRuns;
   state.invoiceAllocations = invoiceAllocations;
   state.invoiceRules = invoiceRules;
   state.invoiceAttachments = invoiceAttachments;
@@ -543,7 +540,6 @@ function renderInvoices() {
   const filteredInvoices = activeType === "all" ? visibleInvoices : visibleInvoices.filter((row) => row.invoice_type === activeType);
   const unassigned = filteredInvoices.filter(invoiceNeedsResolution);
   const corrections = filteredInvoices.filter(invoiceIsCorrection);
-  const recentRuns = state.importRuns.slice(0, 5);
   return `
     ${heading("KSeF / REJESTR FAKTUR", "Faktury", "Faktury zakupowe i sprzedażowe. Każdą pozycję można przypisać do kontraktu lub kosztów firmy.", canAdd ? button("+ Dodaj fakturę", "invoice") : "")}
     ${monthNavigator("invoice", activeMonth, monthlyInvoices, "faktur")}
@@ -556,7 +552,6 @@ function renderInvoices() {
     </section>
     <section class="ksef-import-card"><div class="ksef-import-intro"><div class="callout-icon">⇩</div><div><p class="eyebrow">${escapeHtml(ksefLabel)}</p><h2>Import faktur</h2><p>Wybierz rodzaj dokumentów za <strong>${escapeHtml(activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc")}</strong>. Duplikaty po numerze KSeF i środowisku zostaną pominięte.</p>${productionNotice}</div></div>${canAdd ? `<div class="ksef-import-actions"><div class="ksef-import-actions-head"><span>ŚRODOWISKO I ZAKRES</span>${environmentSwitch}<button class="text-button" type="button" data-action="test-ksef">Test połączenia</button></div><div class="ksef-import-action-grid"><button class="ksef-import-button ksef-import-sales" type="button" data-action="import-ksef-sales"><span>FV sprzedażowe</span><small>Przychody z kontraktów</small></button><button class="ksef-import-button ksef-import-purchase" type="button" data-action="import-ksef-purchase"><span>FV zakupowe</span><small>Koszty i zakupy firmy</small></button><button class="ksef-import-button ksef-import-all" type="button" data-action="import-ksef-month"><span>Wszystkie FV</span><small>Zakupowe i sprzedażowe</small></button></div></div>` : ""}</section>
     ${invoiceTypeTabs(visibleInvoices, activeType)}
-    ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
     ${renderInvoiceInbox(unassigned, canAdd, corrections.length)}
     ${renderInvoiceCorrections(corrections)}
     ${renderInvoiceRules(canAdd)}
@@ -1107,11 +1102,6 @@ function scheduleRow(row) {
   const predecessor = scheduleDependencyName(row);
   const subtitle = [row.is_milestone ? "Kamień milowy" : "", predecessor ? `Po: ${predecessor}` : "", row.notes || ""].filter(Boolean).join(" · ") || "—";
   return `<tr><td><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(subtitle)}</small></td><td>${term}</td><td>${escapeHtml(row.responsible || "—")}</td><td class="schedule-progress"><strong>${clampProgress(row.progress)}%</strong><div class="progress"><span style="width:${clampProgress(row.progress)}%"></span></div></td><td>${statusTag(row.status)}</td><td class="row-actions">${controls}</td></tr>`;
-}
-function importRunRow(row) {
-  const message = row.error_message || (row.status === "completed" ? "Import zakończony" : row.status === "queued" ? "Oczekuje na wykonanie" : "—");
-  const environment = row.environment === "production" ? "Produkcja" : row.environment === "demo" ? "DEMO" : "Test";
-  return `<tr><td>${dateTime(row.created_at)}</td><td>${environment}</td><td>${importRunTag(row.status)}</td><td>${Number(row.imported_count || 0)}</td><td>${Number(row.skipped_count || 0)}</td><td><small>${escapeHtml(message)}</small></td></tr>`;
 }
 function alertRow(row) {
   const action = row.contractId
@@ -2329,7 +2319,6 @@ function dayNumber(value) { return Math.floor(Date.parse(`${value}T12:00:00Z`) /
 function dayToIso(day) { return new Date(day * 86400000).toISOString().slice(0, 10); }
 function addDays(isoDate, days) { const date = new Date(`${isoDate}T12:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); }
 function alertSeverityLabel(severity) { return ({ critical: "Krytyczny", warning: "Ostrzeżenie", info: "Informacja" })[severity] || "Informacja"; }
-function importRunTag(status) { const tone = status === "failed" ? "red" : status === "completed" ? "green" : status === "running" ? "blue" : "yellow"; const label = ({ queued: "Oczekuje", running: "W toku", completed: "Zakończony", failed: "Wymaga konfiguracji" })[status] || status; return `<span class="tag tag-${tone}">${label}</span>`; }
 
 function canManageContracts() { return ["owner", "manager"].includes(state.profile?.role); }
 function canManageFinance() { return ["owner", "accountant"].includes(state.profile?.role); }

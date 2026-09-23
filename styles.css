@@ -260,7 +260,6 @@ td small { display: block; margin-top: 4px; color: var(--ink-soft); }
 .alert-copy > div { display: flex; align-items: center; gap: 10px; }
 .alert-copy strong { font-size: 14px; }
 .alert-copy p { margin: 5px 0 0; color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
-.import-runs { margin-bottom: 30px; }
 .import-toast { position: fixed; z-index: 30; right: 26px; bottom: 26px; display: flex; align-items: center; gap: 13px; width: min(370px, calc(100vw - 32px)); padding: 16px 18px; border: 1px solid #d2ab00; color: var(--ink); background: #fffdf0; box-shadow: 0 16px 42px rgba(0, 0, 0, .18); }
 .import-toast[hidden] { display: none; }
 .import-toast strong { display: block; font-size: 13px; }
