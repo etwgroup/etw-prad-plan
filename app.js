@@ -627,14 +627,14 @@ function renderCosts() {
     ${monthNavigator("cost", activeMonth, monthlyCosts, "kosztów")}
     <section class="metric-grid">
       ${metric("Pozycje", String(visibleCosts.length), activeMonth ? monthLabel(activeMonth) : "Brak danych", "yellow")}
-      ${metric("Koszty firmowe", money(sum(visibleCosts, "net_amount_cents")), "Netto", "red")}
+      ${invoiceAmountMetric("Koszty firmowe", visibleCosts, "Netto i brutto", "red")}
       ${metric("Do płatności", String(visibleCosts.filter((row) => row.payment_status === "do_platnosci").length), "Bieżące zobowiązania", "blue")}
       ${metric("Opłacone", String(visibleCosts.filter((row) => row.payment_status === "oplacona").length), "Status płatności", "green")}
     </section>
     <section class="cost-breakdown" aria-label="Podział kosztów firmowych">${categories.map((category) => costCategoryCard(category, visibleCosts)).join("")}</section>
     <section class="panel">
       <div class="panel-head"><div><h2>Rejestr kosztów — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Pozycje nie są doliczane do budżetu pojedynczego kontraktu. FV rozliczone częściowo pokazują wyłącznie przypisaną kwotę netto.</p></div></div>
-      ${visibleCosts.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Źródło</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${visibleCosts.map(companyCostRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów w wybranym miesiącu.")}
+      ${visibleCosts.length ? `<div class="table-wrap invoice-table-wrap"><table class="cost-register-table"><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Źródło</th><th>Netto</th><th>Kwota VAT</th><th>Brutto</th><th>Status</th><th></th></tr></thead><tbody>${visibleCosts.map(companyCostRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów w wybranym miesiącu.")}
     </section>`;
 }
 
@@ -981,7 +981,7 @@ function companyCostRow(row) {
 
 function costRow(row) {
   const controls = canManageFinance() ? `<button class="table-action" type="button" data-action="edit-cost" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-cost" data-id="${row.id}">Usuń</button>` : "";
-  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(costCategoryLabel(row.category))}</td><td><strong>${escapeHtml(row.description || "—")}</strong></td><td>${escapeHtml(row.vendor || "—")}</td><td>${escapeHtml(row.document_number || "—")}</td><td><span class="tag tag-blue">Ręczny koszt</span></td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  return `<tr><td data-label="Data">${date(row.cost_date)}</td><td data-label="Kategoria">${escapeHtml(costCategoryLabel(row.category))}</td><td data-label="Opis"><strong>${escapeHtml(row.description || "—")}</strong></td><td data-label="Dostawca">${escapeHtml(row.vendor || "—")}</td><td data-label="Dokument">${escapeHtml(row.document_number || "—")}</td><td data-label="Źródło"><span class="tag tag-blue">Ręczny koszt</span></td><td data-label="Netto" class="money">${money(row.net_amount_cents)}</td><td data-label="Kwota VAT" class="money">${money(vatAmountCents(row))}</td><td data-label="Brutto" class="money">${money(grossAmountCents(row))}</td><td data-label="Status">${statusTag(row.payment_status)}</td><td data-label="Akcje" class="row-actions">${controls}</td></tr>`;
 }
 
 function invoiceCostRow(row) {
@@ -993,7 +993,7 @@ function invoiceCostRow(row) {
     ? `${preview}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${invoice.id}">Rozlicz</button>`
     : "";
   const source = invoice.source === "ksef" ? invoiceSourceLabel(invoice) : "FV ręczna";
-  return `<tr><td>${date(row.cost_date)}</td><td>${escapeHtml(costCategoryLabel(row.category))}</td><td><strong>${escapeHtml(row.description)}</strong><small>${row.net_amount_cents !== invoice.net_amount_cents ? `Część FV: ${money(row.net_amount_cents)}` : "Cała kwota FV"}</small></td><td>${escapeHtml(row.vendor || "—")}</td><td><strong>${escapeHtml(row.document_number || "—")}</strong></td><td><span class="tag tag-yellow">${escapeHtml(source)}</span></td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  return `<tr><td data-label="Data">${date(row.cost_date)}</td><td data-label="Kategoria">${escapeHtml(costCategoryLabel(row.category))}</td><td data-label="Opis"><strong>${escapeHtml(row.description)}</strong><small>${row.net_amount_cents !== invoice.net_amount_cents ? `Część FV: ${money(row.net_amount_cents)}` : "Cała kwota FV"}</small></td><td data-label="Dostawca">${escapeHtml(row.vendor || "—")}</td><td data-label="Dokument"><strong>${escapeHtml(row.document_number || "—")}</strong></td><td data-label="Źródło"><span class="tag tag-yellow">${escapeHtml(source)}</span></td><td data-label="Netto" class="money">${money(row.net_amount_cents)}</td><td data-label="Kwota VAT" class="money">${money(vatAmountCents(row))}</td><td data-label="Brutto" class="money">${money(grossAmountCents(row))}</td><td data-label="Status">${statusTag(row.payment_status)}</td><td data-label="Akcje" class="row-actions">${controls}</td></tr>`;
 }
 function detailSettlementRow(row) {
   const controls = canManageContracts() ? `<button class="table-action" type="button" data-action="edit-settlement" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-settlement" data-id="${row.id}">Usuń</button>` : "";
