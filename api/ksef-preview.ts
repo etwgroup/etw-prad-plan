@@ -1,4 +1,4 @@
-// PrądPlan / podgląd metadanych faktur z KSeF DEMO.
+// PrądPlan / podgląd metadanych faktur z KSeF DEMO albo PRODUKCJI.
 // Endpoint działa wyłącznie po stronie Node.js na Vercel. Zwraca podgląd dla
 // wybranego miesiąca, ale nie zapisuje danych w Supabase ani w PrądPlan.
 import { createClient } from "@supabase/supabase-js";
@@ -19,6 +19,7 @@ type VercelResponse = {
 };
 
 const PAGE_SIZE = 100;
+type KsefEnvironment = "demo" | "production";
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   response.setHeader("Cache-Control", "no-store");
@@ -27,11 +28,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return response.status(405).json({ error: "Metoda niedozwolona." });
   }
 
+  let environment: KsefEnvironment = "demo";
   try {
     const token = authorizationToken(request.headers.authorization);
     if (!token) return response.status(401).json({ error: "Brak sesji użytkownika." });
 
-    const month = readMonth(request.body);
+    const previewRequest = readPreviewRequest(request.body);
+    const { month } = previewRequest;
+    environment = previewRequest.environment;
     const projectUrl = requiredEnvironment("SUPABASE_URL");
     const publishableKey = requiredEnvironment("SUPABASE_PUBLISHABLE_KEY");
     const callerClient = createClient(projectUrl, publishableKey, {
@@ -53,14 +57,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!profile?.active || !["owner", "accountant"].includes(profile.role)) {
       return response.status(403).json({ error: "Brak uprawnień do podglądu KSeF." });
     }
+    if (environment === "production" && profile.role !== "owner") {
+      return response.status(403).json({ error: "Podgląd KSeF PRODUKCJA może uruchomić wyłącznie właściciel." });
+    }
 
-    const certificatePem = certificateToPem(requiredEnvironment("KSEF_DEMO_CERTIFICATE_BASE64"));
-    const privateKeyPem = privateKeyToPem(
-      requiredEnvironment("KSEF_DEMO_PRIVATE_KEY_BASE64"),
-      process.env.KSEF_DEMO_PRIVATE_KEY_PASSWORD || "",
-    );
-    const client = new KSeFClient({ environment: "DEMO" });
-    await client.loginWithCertificate(certificatePem, privateKeyPem, requiredEnvironment("KSEF_DEMO_NIP"));
+    const credentials = credentialsFor(environment);
+    const client = new KSeFClient({ environment: credentials.clientEnvironment });
+    await client.loginWithCertificate(credentials.certificatePem, credentials.privateKeyPem, credentials.nip);
 
     const { from, to } = monthRange(month);
     const salesFilter = new InvoiceQueryFilterBuilder()
@@ -84,15 +87,16 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     return response.status(200).json({
       month,
+      environment,
       invoices,
       limited: sales.hasMore || purchases.hasMore || sales.isTruncated || purchases.isTruncated,
-      message: `Pobrano podgląd ${invoices.length} faktur z KSeF DEMO. Dane nie zostały jeszcze zapisane w PrądPlan.`,
+      message: `Pobrano podgląd ${invoices.length} faktur z ${ksefLabel(environment)}. Dane nie zostały jeszcze zapisane w PrądPlan.`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
-    console.error("KSeF DEMO invoice preview failed", diagnostic);
+    console.error(`${ksefLabel(environment)} invoice preview failed`, diagnostic);
     return response.status(422).json({
-      error: "Nie udało się pobrać podglądu faktur z KSeF DEMO. Sprawdź logi funkcji Vercel.",
+      error: `Nie udało się pobrać podglądu faktur z ${ksefLabel(environment)}. Sprawdź logi funkcji Vercel.`,
     });
   }
 }
@@ -125,7 +129,7 @@ function previewInvoice(invoice: {
   };
 }
 
-function readMonth(body: unknown) {
+function readPreviewRequest(body: unknown) {
   const payload = typeof body === "string" ? JSON.parse(body) : body;
   const month = typeof (payload as { month?: unknown } | null)?.month === "string"
     ? (payload as { month: string }).month
@@ -133,7 +137,13 @@ function readMonth(body: unknown) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     throw new Error("Nieprawidłowy miesiąc podglądu.");
   }
-  return month;
+  const requestedEnvironment = typeof (payload as { environment?: unknown } | null)?.environment === "string"
+    ? (payload as { environment: string }).environment.trim().toLowerCase()
+    : "demo";
+  if (requestedEnvironment !== "demo" && requestedEnvironment !== "production") {
+    throw new Error("Nieprawidłowe środowisko KSeF.");
+  }
+  return { month, environment: requestedEnvironment as KsefEnvironment };
 }
 
 function monthRange(month: string) {
@@ -154,6 +164,23 @@ function requiredEnvironment(name: string) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Brakuje zmiennej środowiskowej ${name}.`);
   return value;
+}
+
+function credentialsFor(environment: KsefEnvironment) {
+  const prefix = environment === "production" ? "KSEF_PROD" : "KSEF_DEMO";
+  return {
+    certificatePem: certificateToPem(requiredEnvironment(`${prefix}_CERTIFICATE_BASE64`)),
+    privateKeyPem: privateKeyToPem(
+      requiredEnvironment(`${prefix}_PRIVATE_KEY_BASE64`),
+      process.env[`${prefix}_PRIVATE_KEY_PASSWORD`] || "",
+    ),
+    nip: requiredEnvironment(`${prefix}_NIP`),
+    clientEnvironment: environment === "production" ? "PROD" as const : "DEMO" as const,
+  };
+}
+
+function ksefLabel(environment: KsefEnvironment) {
+  return environment === "production" ? "KSeF PRODUKCJA" : "KSeF DEMO";
 }
 
 function certificateToPem(base64: string) {

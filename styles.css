@@ -177,6 +177,13 @@ td small { display: block; margin-top: 4px; color: var(--ink-soft); }
 .ksef-import-intro p:last-child strong { color: var(--ink); text-transform: capitalize; }
 .ksef-import-actions { display: grid; align-content: center; gap: 15px; padding: 27px; }
 .ksef-import-actions-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #8d6900; font-size: 11px; font-weight: 800; letter-spacing: .09em; }
+.ksef-environment-switch { display: inline-flex; overflow: hidden; border: 1px solid #d8cfaf; background: #fffdf4; }
+.ksef-environment-button { border: 0; border-left: 1px solid #d8cfaf; padding: 8px 10px; color: #786a40; background: transparent; font-size: 10px; font-weight: 900; letter-spacing: .07em; }
+.ksef-environment-button:first-child { border-left: 0; }
+.ksef-environment-button:hover { color: var(--ink); background: #fff7cf; }
+.ksef-environment-button.is-active { color: var(--ink); background: var(--yellow); }
+.ksef-environment-production.is-active { color: #fff; background: #a13535; }
+.ksef-production-notice { margin: 13px 0 0 !important; padding: 10px 12px; border-left: 3px solid #a13535; color: #7d3030 !important; background: #fff2f1; font-size: 12px !important; line-height: 1.45 !important; }
 .text-button { border: 0; padding: 3px 0; color: var(--ink-soft); background: transparent; font-size: 11px; font-weight: 800; letter-spacing: .03em; text-decoration: underline; text-underline-offset: 3px; text-transform: uppercase; }
 .text-button:hover { color: var(--ink); }
 .ksef-import-action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -351,6 +358,7 @@ textarea { min-height: 85px; resize: vertical; }
 .invoice-attachment-row strong, .invoice-attachment-row small { display: block; }
 .invoice-attachment-row small { margin-top: 4px; color: var(--ink-soft); font-size: 12px; }
 .field-hint { display: block; margin-top: 7px; color: var(--ink-soft); font-size: 12px; font-weight: 500; line-height: 1.45; }
+.readonly-field { display: block; min-height: 42px; padding: 12px 13px; border: 1px solid var(--line); color: var(--ink-soft); background: #f6f6f4; font-size: 14px; }
 
 /* Ekran logowania musi przykrywać całą przestrzeń widoku, niezależnie od
    domyślnych marginesów lub reguł dodanych przez hosting/przeglądarkę. */
@@ -427,6 +435,9 @@ html body #app .auth-screen {
   .callout { flex-wrap: wrap; }
   .callout-actions { width: 100%; }
   .ksef-import-intro, .ksef-import-actions { padding: 20px; }
+  .ksef-import-actions-head { align-items: flex-start; flex-wrap: wrap; }
+  .ksef-environment-switch { order: 3; width: 100%; }
+  .ksef-environment-button { flex: 1; }
   .ksef-import-action-grid { grid-template-columns: 1fr; }
   .ksef-import-button { min-height: 70px; }
   .invoice-type-tabs { max-width: none; }

@@ -1,4 +1,4 @@
-// PrądPlan / wizualizacja pojedynczej faktury KSeF DEMO.
+// PrądPlan / wizualizacja pojedynczej faktury KSeF (DEMO albo PRODUKCJA).
 // XML faktury jest pobierany, odszyfrowywany i przetwarzany wyłącznie na
 // serwerze. Do przeglądarki trafia tylko ograniczony zestaw danych potrzebny
 // do pokazania dokumentu.
@@ -22,6 +22,7 @@ type VercelResponse = {
 type SavedInvoice = {
   id: string;
   ksef_number: string | null;
+  ksef_environment: "demo" | "production" | null;
 };
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
@@ -31,6 +32,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return response.status(405).json({ error: "Metoda niedozwolona." });
   }
 
+  let environment: "demo" | "production" = "demo";
   try {
     const token = authorizationToken(request.headers.authorization);
     if (!token) return response.status(401).json({ error: "Brak sesji użytkownika." });
@@ -59,29 +61,32 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const { data: savedInvoice, error: invoiceError } = await callerClient
       .from("invoices")
-      .select("id, ksef_number")
+      .select("id, ksef_number, ksef_environment")
       .eq("id", invoiceId)
       .single();
-    if (invoiceError || !(savedInvoice as SavedInvoice | null)?.ksef_number) {
+    const invoice = savedInvoice as SavedInvoice | null;
+    if (invoiceError || !invoice?.ksef_number || !["demo", "production"].includes(invoice.ksef_environment || "")) {
       return response.status(404).json({ error: "Nie znaleziono zaimportowanej faktury KSeF." });
     }
+    environment = invoice.ksef_environment as "demo" | "production";
+    if (environment === "production" && profile.role !== "owner") {
+      return response.status(403).json({ error: "Podgląd faktury z KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela." });
+    }
 
-    const certificatePem = certificateToPem(requiredEnvironment("KSEF_DEMO_CERTIFICATE_BASE64"));
-    const privateKeyPem = privateKeyToPem(
-      requiredEnvironment("KSEF_DEMO_PRIVATE_KEY_BASE64"),
-      process.env.KSEF_DEMO_PRIVATE_KEY_PASSWORD || "",
-    );
-    const client = new KSeFClient({ environment: "DEMO" });
-    await client.loginWithCertificate(certificatePem, privateKeyPem, requiredEnvironment("KSEF_DEMO_NIP"));
+    const credentials = credentialsFor(environment);
+    const client = new KSeFClient({ environment: credentials.clientEnvironment });
+    await client.loginWithCertificate(credentials.certificatePem, credentials.privateKeyPem, credentials.nip);
 
-    const invoice = savedInvoice as SavedInvoice;
     const xml = await downloadInvoiceXml(client, invoice.ksef_number as string);
-    return response.status(200).json({ invoice: visualizationFromXml(xml, invoice.ksef_number as string) });
+    return response.status(200).json({
+      environment,
+      invoice: visualizationFromXml(xml, invoice.ksef_number as string),
+    });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
-    console.error("KSeF DEMO invoice visualization failed", diagnostic);
+    console.error(`${ksefLabel(environment)} invoice visualization failed`, diagnostic);
     return response.status(422).json({
-      error: "Nie udało się pobrać wizualizacji faktury z KSeF DEMO. Sprawdź logi funkcji Vercel.",
+      error: `Nie udało się pobrać wizualizacji faktury z ${ksefLabel(environment)}. Sprawdź logi funkcji Vercel.`,
     });
   }
 }
@@ -95,6 +100,23 @@ function readInvoiceId(body: unknown) {
     throw new Error("Nieprawidłowy identyfikator faktury.");
   }
   return invoiceId;
+}
+
+function credentialsFor(environment: "demo" | "production") {
+  const prefix = environment === "production" ? "KSEF_PROD" : "KSEF_DEMO";
+  return {
+    certificatePem: certificateToPem(requiredEnvironment(`${prefix}_CERTIFICATE_BASE64`)),
+    privateKeyPem: privateKeyToPem(
+      requiredEnvironment(`${prefix}_PRIVATE_KEY_BASE64`),
+      process.env[`${prefix}_PRIVATE_KEY_PASSWORD`] || "",
+    ),
+    nip: requiredEnvironment(`${prefix}_NIP`),
+    clientEnvironment: environment === "production" ? "PROD" as const : "DEMO" as const,
+  };
+}
+
+function ksefLabel(environment: "demo" | "production") {
+  return environment === "production" ? "KSeF PRODUKCJA" : "KSeF DEMO";
 }
 
 async function downloadInvoiceXml(client: KSeFClient, ksefNumber: string) {

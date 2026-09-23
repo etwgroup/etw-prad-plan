@@ -1,7 +1,7 @@
-// PrądPlan / import metadanych faktur z KSeF DEMO.
+// PrądPlan / import metadanych faktur z KSeF DEMO albo PRODUKCJI.
 // Gdy przeglądarka nie przekaże numerów KSeF, funkcja importuje cały wybrany
 // miesiąc. Numery można przekazać tylko dla zachowania kompatybilności ze
-// starszym widokiem podglądu.
+// starszym widokiem podglądu. Funkcja nie ma ścieżki wysyłania dokumentów.
 import { createClient } from "@supabase/supabase-js";
 import { Buffer } from "node:buffer";
 import { createPrivateKey } from "node:crypto";
@@ -35,6 +35,8 @@ type ExistingInvoice = {
   due_date: string | null;
 };
 
+type KsefEnvironment = "demo" | "production";
+
 type InvoiceToImport = {
   invoice: KsefInvoice;
   type: "sales" | "purchase";
@@ -60,11 +62,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return response.status(405).json({ error: "Metoda niedozwolona." });
   }
 
+  let environment: KsefEnvironment = "demo";
   try {
     const token = authorizationToken(request.headers.authorization);
     if (!token) return response.status(401).json({ error: "Brak sesji użytkownika." });
 
-    const { month, ksefNumbers, invoiceType } = readImportRequest(request.body);
+    const importRequest = readImportRequest(request.body);
+    const { month, ksefNumbers, invoiceType } = importRequest;
+    environment = importRequest.environment;
     const projectUrl = requiredEnvironment("SUPABASE_URL");
     const publishableKey = requiredEnvironment("SUPABASE_PUBLISHABLE_KEY");
     const callerClient = createClient(projectUrl, publishableKey, {
@@ -85,6 +90,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!profile?.active || !["owner", "accountant"].includes(profile.role)) {
       return response.status(403).json({ error: "Brak uprawnień do importu KSeF." });
     }
+    if (environment === "production" && profile.role !== "owner") {
+      return response.status(403).json({ error: "Import z KSeF PRODUKCJA może uruchomić wyłącznie właściciel." });
+    }
+    if (environment === "production" && process.env.KSEF_PROD_IMPORT_ENABLED !== "true") {
+      return response.status(403).json({ error: "Import z KSeF PRODUKCJA jest jeszcze zablokowany. Najpierw potwierdź test połączenia, a następnie włącz sekret KSEF_PROD_IMPORT_ENABLED=true w Vercel." });
+    }
 
     const { data: assignmentRuleRows, error: assignmentRulesError } = await callerClient
       .from("invoice_assignment_rules")
@@ -95,13 +106,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (assignmentRulesError) throw assignmentRulesError;
     const assignmentRules = (assignmentRuleRows || []) as AssignmentRule[];
 
-    const certificatePem = certificateToPem(requiredEnvironment("KSEF_DEMO_CERTIFICATE_BASE64"));
-    const privateKeyPem = privateKeyToPem(
-      requiredEnvironment("KSEF_DEMO_PRIVATE_KEY_BASE64"),
-      process.env.KSEF_DEMO_PRIVATE_KEY_PASSWORD || "",
-    );
-    const client = new KSeFClient({ environment: "DEMO" });
-    await client.loginWithCertificate(certificatePem, privateKeyPem, requiredEnvironment("KSEF_DEMO_NIP"));
+    const credentials = credentialsFor(environment);
+    const client = new KSeFClient({ environment: credentials.clientEnvironment });
+    await client.loginWithCertificate(credentials.certificatePem, credentials.privateKeyPem, credentials.nip);
 
     const { from, to } = monthRange(month);
     const [sales, purchases] = await Promise.all([
@@ -125,14 +132,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(200).json({
         imported: 0,
         skipped: 0,
-        message: `KSeF DEMO nie zwrócił ${invoiceTypeLabel(invoiceType)} do importu w wybranym miesiącu.`,
+        message: `${ksefLabel(environment)} nie zwrócił ${invoiceTypeLabel(invoiceType)} do importu w wybranym miesiącu.`,
       });
     }
 
     const { data: existingRows, error: existingError } = await callerClient
       .from("invoices")
       .select("id, ksef_number, due_date")
-      .in("ksef_number", foundNumbers);
+      .in("ksef_number", foundNumbers)
+      .eq("ksef_environment", environment);
     if (existingError) throw existingError;
 
     const existingByKsefNumber = new Map(
@@ -162,12 +170,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
         dueDates.get(invoice.ksefNumber) || null,
         itemSummaries.get(invoice.ksefNumber) || "",
         matchingRule(invoice, type, itemSummaries.get(invoice.ksefNumber) || "", assignmentRules),
+        environment,
       ));
 
     if (toInsert.length) {
       const { error: insertError } = await callerClient
         .from("invoices")
-        .upsert(toInsert, { onConflict: "ksef_number", ignoreDuplicates: true });
+        .upsert(toInsert, { onConflict: "ksef_number,ksef_environment", ignoreDuplicates: true });
       if (insertError) throw insertError;
     }
 
@@ -200,9 +209,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
-    console.error("KSeF DEMO invoice import failed", diagnostic);
+    console.error(`${ksefLabel(environment)} invoice import failed`, diagnostic);
     return response.status(422).json({
-      error: "Nie udało się zaimportować wybranych faktur z KSeF DEMO. Sprawdź logi funkcji Vercel.",
+      error: `Nie udało się zaimportować wybranych faktur z ${ksefLabel(environment)}. Sprawdź logi funkcji Vercel.`,
     });
   }
 }
@@ -214,6 +223,7 @@ function invoicePayload(
   dueDate: string | null,
   itemSummary: string,
   rule: AssignmentRule | null,
+  environment: KsefEnvironment,
 ) {
   const netAmount = numberToCents(invoice.netAmount, "kwotę netto");
   const vatAmount = numberToCents(invoice.vatAmount, "kwotę VAT");
@@ -227,6 +237,7 @@ function invoicePayload(
   return {
     invoice_type: type,
     source: "ksef",
+    ksef_environment: environment,
     document_number: invoice.invoiceNumber || invoice.ksefNumber,
     ksef_number: invoice.ksefNumber,
     counterparty,
@@ -266,7 +277,7 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
       } catch (error) {
         failures += 1;
         const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
-        console.warn("KSeF DEMO payment due date skipped", item.invoice.ksefNumber, diagnostic);
+        console.warn("KSeF payment due date skipped", item.invoice.ksefNumber, diagnostic);
       }
     }
   }
@@ -381,6 +392,12 @@ function numberToCents(value: number, label: string) {
 
 function readImportRequest(body: unknown) {
   const payload = typeof body === "string" ? JSON.parse(body) : body;
+  const requestedEnvironment = typeof (payload as { environment?: unknown } | null)?.environment === "string"
+    ? (payload as { environment: string }).environment.trim().toLowerCase()
+    : "demo";
+  if (requestedEnvironment !== "demo" && requestedEnvironment !== "production") {
+    throw new Error("Nieprawidłowe środowisko KSeF.");
+  }
   const month = typeof (payload as { month?: unknown } | null)?.month === "string"
     ? (payload as { month: string }).month
     : "";
@@ -394,7 +411,12 @@ function readImportRequest(body: unknown) {
     ? (payload as { invoiceType: string }).invoiceType.trim()
     : "all";
   if (!["all", "sales", "purchase"].includes(requestedType)) throw new Error("Nieprawidłowy rodzaj faktur do importu.");
-  return { month, ksefNumbers, invoiceType: requestedType as "all" | "sales" | "purchase" };
+  return {
+    month,
+    ksefNumbers,
+    invoiceType: requestedType as "all" | "sales" | "purchase",
+    environment: requestedEnvironment as KsefEnvironment,
+  };
 }
 
 function invoiceTypeLabel(type: "all" | "sales" | "purchase") {
@@ -419,6 +441,23 @@ function requiredEnvironment(name: string) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Brakuje zmiennej środowiskowej ${name}.`);
   return value;
+}
+
+function credentialsFor(environment: KsefEnvironment) {
+  const prefix = environment === "production" ? "KSEF_PROD" : "KSEF_DEMO";
+  return {
+    certificatePem: certificateToPem(requiredEnvironment(`${prefix}_CERTIFICATE_BASE64`)),
+    privateKeyPem: privateKeyToPem(
+      requiredEnvironment(`${prefix}_PRIVATE_KEY_BASE64`),
+      process.env[`${prefix}_PRIVATE_KEY_PASSWORD`] || "",
+    ),
+    nip: requiredEnvironment(`${prefix}_NIP`),
+    clientEnvironment: environment === "production" ? "PROD" as const : "DEMO" as const,
+  };
+}
+
+function ksefLabel(environment: KsefEnvironment) {
+  return environment === "production" ? "KSeF PRODUKCJA" : "KSeF DEMO";
 }
 
 function certificateToPem(base64: string) {

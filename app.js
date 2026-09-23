@@ -64,6 +64,7 @@ const state = {
   ksefPreviewMonth: "",
   ksefPreviewLimited: false,
   ksefSelectedNumbers: new Set(),
+  ksefEnvironment: "demo",
   history: [],
   users: [],
   contractDetail: null,
@@ -371,7 +372,7 @@ async function loadSettlementData(supabase) {
 async function loadInvoiceData(supabase) {
   const [contracts, invoices, importRuns, invoiceAllocations, invoiceRules, invoiceAttachments] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
-    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status, contracts(name)", "issue_date", false),
+    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, ksef_environment, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status, contracts(name)", "issue_date", false),
     canManageFinance() ? selectRows(supabase, "invoice_import_runs", "id, status, environment, imported_count, skipped_count, error_message, created_at, finished_at", "created_at", false) : Promise.resolve([]),
     selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, budget_category, net_amount_cents", "created_at", false),
     canManageFinance() ? selectRows(supabase, "invoice_assignment_rules", "id, name, active, priority, invoice_type, match_nip, match_text, target_type, contract_id, company_category, contracts(name)", "priority", true) : Promise.resolve([]),
@@ -397,7 +398,7 @@ async function loadContractDetailData(supabase) {
   const [contracts, settlements, allInvoices, invoiceAllocations, budgetCategories, invoiceAttachments, changes, documents, schedule, history] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
     selectRowsBy(supabase, "settlements", "id, contract_id, period, settlement_date, kind, net_amount_cents, vat_rate, reference_number, budget_category", "contract_id", contractId, "settlement_date", false),
-    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status", "issue_date", false),
+    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, ksef_environment, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status", "issue_date", false),
     selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, budget_category, net_amount_cents", "created_at", false),
     selectRowsBy(supabase, "contract_budget_categories", "id, contract_id, category, planned_cents, notes", "contract_id", contractId, "category", true),
     selectRows(supabase, "invoice_attachments", "id, invoice_id, file_name, storage_path, mime_type, size_bytes, label, ocr_status, created_at", "created_at", false),
@@ -512,6 +513,15 @@ function renderSettlements() {
 
 function renderInvoices() {
   const canAdd = canManageFinance();
+  if (state.ksefEnvironment === "production" && !isOwner()) state.ksefEnvironment = "demo";
+  const ksefEnvironment = state.ksefEnvironment === "production" ? "production" : "demo";
+  const ksefLabel = ksefEnvironmentLabel(ksefEnvironment);
+  const productionNotice = ksefEnvironment === "production"
+    ? `<p class="ksef-production-notice"><strong>Tryb produkcyjny:</strong> połączenie służy wyłącznie do odczytu i importu do rejestru PrądPlan. Aplikacja nie wystawia ani nie wysyła faktur do KSeF.</p>`
+    : "";
+  const environmentSwitch = isOwner()
+    ? `<div class="ksef-environment-switch" role="group" aria-label="Środowisko KSeF"><button class="ksef-environment-button ${ksefEnvironment === "demo" ? "is-active" : ""}" type="button" data-action="set-ksef-environment" data-ksef-environment="demo">DEMO</button><button class="ksef-environment-button ksef-environment-production ${ksefEnvironment === "production" ? "is-active" : ""}" type="button" data-action="set-ksef-environment" data-ksef-environment="production">PRODUKCJA</button></div>`
+    : "";
   const monthlyInvoices = groupRowsByMonth(state.invoices, "issue_date");
   const activeMonth = selectedMonthKey("invoiceMonth", monthlyInvoices);
   const visibleInvoices = activeMonth ? state.invoices.filter((row) => monthKey(row.issue_date) === activeMonth) : [];
@@ -528,7 +538,7 @@ function renderInvoices() {
       ${metric("Sprzedażowe", money(sum(visibleInvoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "green")}
       ${metric("Do przypisania", money(sum(unassigned, "net_amount_cents")), `${unassigned.length} pozycji`, "yellow")}
     </section>
-    <section class="ksef-import-card"><div class="ksef-import-intro"><div class="callout-icon">⇩</div><div><p class="eyebrow">KSEF DEMO</p><h2>Import faktur</h2><p>Wybierz rodzaj dokumentów za <strong>${escapeHtml(activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc")}</strong>. Duplikaty po numerze KSeF zostaną pominięte.</p></div></div>${canAdd ? `<div class="ksef-import-actions"><div class="ksef-import-actions-head"><span>CO CHCESZ POBRAĆ?</span><button class="text-button" type="button" data-action="test-ksef-demo">Test połączenia</button></div><div class="ksef-import-action-grid"><button class="ksef-import-button ksef-import-sales" type="button" data-action="import-ksef-sales"><span>FV sprzedażowe</span><small>Przychody z kontraktów</small></button><button class="ksef-import-button ksef-import-purchase" type="button" data-action="import-ksef-purchase"><span>FV zakupowe</span><small>Koszty i zakupy firmy</small></button><button class="ksef-import-button ksef-import-all" type="button" data-action="import-ksef-month"><span>Wszystkie FV</span><small>Zakupowe i sprzedażowe</small></button></div></div>` : ""}</section>
+    <section class="ksef-import-card"><div class="ksef-import-intro"><div class="callout-icon">⇩</div><div><p class="eyebrow">${escapeHtml(ksefLabel)}</p><h2>Import faktur</h2><p>Wybierz rodzaj dokumentów za <strong>${escapeHtml(activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc")}</strong>. Duplikaty po numerze KSeF i środowisku zostaną pominięte.</p>${productionNotice}</div></div>${canAdd ? `<div class="ksef-import-actions"><div class="ksef-import-actions-head"><span>ŚRODOWISKO I ZAKRES</span>${environmentSwitch}<button class="text-button" type="button" data-action="test-ksef">Test połączenia</button></div><div class="ksef-import-action-grid"><button class="ksef-import-button ksef-import-sales" type="button" data-action="import-ksef-sales"><span>FV sprzedażowe</span><small>Przychody z kontraktów</small></button><button class="ksef-import-button ksef-import-purchase" type="button" data-action="import-ksef-purchase"><span>FV zakupowe</span><small>Koszty i zakupy firmy</small></button><button class="ksef-import-button ksef-import-all" type="button" data-action="import-ksef-month"><span>Wszystkie FV</span><small>Zakupowe i sprzedażowe</small></button></div></div>` : ""}</section>
     ${invoiceTypeTabs(visibleInvoices, activeType)}
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
     ${renderInvoiceInbox(unassigned, canAdd)}
@@ -548,6 +558,14 @@ function invoiceTypeFilterLabel(type) {
   return ({ all: "Wszystkie faktury", purchase: "FV zakupowe", sales: "FV sprzedażowe" })[type] || "Wszystkie faktury";
 }
 
+function ksefEnvironmentLabel(environment = state.ksefEnvironment) {
+  return environment === "production" ? "KSeF PRODUKCJA" : "KSeF DEMO";
+}
+
+function invoiceSourceLabel(row) {
+  return row?.source === "ksef" ? ksefEnvironmentLabel(row.ksef_environment) : "Ręczna";
+}
+
 function invoiceTypeFilterTitle(type) {
   return ({ all: "Rejestr wszystkich faktur", purchase: "Rejestr FV zakupowych", sales: "Rejestr FV sprzedażowych" })[type] || "Rejestr faktur";
 }
@@ -557,7 +575,7 @@ function invoiceTypeEmptyMessage(type) {
 }
 
 function renderInvoiceInbox(rows, canManage) {
-  return `<section class="panel inbox-panel"><div class="panel-head"><div><h2>Do rozliczenia</h2><p>Faktury bez pełnego przypisania. Możesz rozdzielić jedną fakturę na kilka kontraktów lub kategorii firmowych.</p></div>${rows.length ? `<span class="tag tag-yellow">${rows.length} ${rows.length === 1 ? "faktura" : "faktur"}</span>` : `<span class="tag tag-green">Pusto</span>`}</div>${rows.length ? `<div class="table-wrap"><table class="inbox-table"><thead><tr><th>Faktura</th><th>Kontrahent</th><th>Netto FV</th><th>Pozostało</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF DEMO" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${money(invoiceUnallocatedAmount(row))}</td><td class="row-actions">${canManage ? `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : emptyState("Wszystkie faktury z wybranego miesiąca są rozliczone.")}</section>`;
+  return `<section class="panel inbox-panel"><div class="panel-head"><div><h2>Do rozliczenia</h2><p>Faktury bez pełnego przypisania. Możesz rozdzielić jedną fakturę na kilka kontraktów lub kategorii firmowych.</p></div>${rows.length ? `<span class="tag tag-yellow">${rows.length} ${rows.length === 1 ? "faktura" : "faktur"}</span>` : `<span class="tag tag-green">Pusto</span>`}</div>${rows.length ? `<div class="table-wrap"><table class="inbox-table"><thead><tr><th>Faktura</th><th>Kontrahent</th><th>Netto FV</th><th>Pozostało</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${money(invoiceUnallocatedAmount(row))}</td><td class="row-actions">${canManage ? `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : emptyState("Wszystkie faktury z wybranego miesiąca są rozliczone.")}</section>`;
 }
 
 function renderInvoiceRules(canManage) {
@@ -842,16 +860,19 @@ function invoiceRow(row) {
     : "";
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
   const controls = canManageFinance() ? `${preview}${attachmentControl}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
-  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF DEMO" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function renderKsefPreview(activeMonth) {
   if (state.ksefPreviewMonth !== activeMonth) return "";
   const rows = state.ksefPreview;
-  const imported = new Set(state.invoices.map((row) => row.ksef_number).filter(Boolean));
+  const imported = new Set(state.invoices
+    .filter((row) => row.ksef_environment === state.ksefEnvironment)
+    .map((row) => row.ksef_number)
+    .filter(Boolean));
   const selectableRows = rows.filter((row) => !imported.has(row.ksefNumber));
   const selectedCount = selectableRows.filter((row) => state.ksefSelectedNumbers.has(row.ksefNumber)).length;
   const actions = rows.length ? `<div class="row-actions"><button class="button button-secondary" type="button" data-action="select-all-ksef-preview" ${selectableRows.length ? "" : "disabled"}>Zaznacz dostępne</button><button class="button button-primary" type="button" data-action="import-ksef-preview" ${selectedCount ? "" : "disabled"}>Importuj zaznaczone (${selectedCount})</button></div>` : "";
-  return `<section class="panel ksef-preview"><div class="panel-head"><div><h2>Podgląd KSeF DEMO — ${escapeHtml(monthLabel(activeMonth))}</h2><p>Wybierz pozycje do zapisu. Import ponownie odczyta ich dane z KSeF i zapisze je jako nieprzypisane faktury w PrądPlan.</p></div>${actions}</div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Import</th><th>Typ</th><th>Numer dokumentu</th><th>Numer KSeF</th><th>Kontrahent</th><th>Data</th><th>Netto</th><th>VAT</th><th>Brutto</th></tr></thead><tbody>${rows.map((row) => ksefPreviewRow(row, imported.has(row.ksefNumber))).join("")}</tbody></table></div>` : emptyState("KSeF DEMO nie zwrócił faktur z wybranego miesiąca.")}${state.ksefPreviewLimited ? `<p class="panel-note">Pokazano maksymalnie 100 faktur sprzedażowych i 100 zakupowych. Zawęź okres przed importem większej liczby dokumentów.</p>` : ""}</section>`;
+  return `<section class="panel ksef-preview"><div class="panel-head"><div><h2>Podgląd ${escapeHtml(ksefEnvironmentLabel())} — ${escapeHtml(monthLabel(activeMonth))}</h2><p>Wybierz pozycje do zapisu. Import ponownie odczyta ich dane z KSeF i zapisze je jako nieprzypisane faktury w PrądPlan.</p></div>${actions}</div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Import</th><th>Typ</th><th>Numer dokumentu</th><th>Numer KSeF</th><th>Kontrahent</th><th>Data</th><th>Netto</th><th>VAT</th><th>Brutto</th></tr></thead><tbody>${rows.map((row) => ksefPreviewRow(row, imported.has(row.ksefNumber))).join("")}</tbody></table></div>` : emptyState(`${ksefEnvironmentLabel()} nie zwrócił faktur z wybranego miesiąca.`)}${state.ksefPreviewLimited ? `<p class="panel-note">Pokazano maksymalnie 100 faktur sprzedażowych i 100 zakupowych. Zawęź okres przed importem większej liczby dokumentów.</p>` : ""}</section>`;
 }
 function ksefPreviewRow(row, alreadyImported) {
   const checkbox = alreadyImported
@@ -1070,7 +1091,7 @@ function formDefinition(mode, record) {
   if (mode === "invoice") return {
     eyebrow: record.id ? "EDYCJA FAKTURY" : "REJESTR FAKTUR", title: record.id ? "Edytuj fakturę" : "Dodaj fakturę", fields: [
       field("Typ faktury", select("invoice_type", options([["purchase", "Zakupowa"], ["sales", "Sprzedażowa"]], record.invoice_type || "purchase"))),
-      field("Źródło", select("source", options([["manual", "Ręczna"], ["ksef", "KSeF"]], record.source || "manual"))),
+      field("Źródło", `<input name="source" type="hidden" value="${record.source === "ksef" ? "ksef" : "manual"}" /><span class="readonly-field">${record.source === "ksef" ? escapeHtml(invoiceSourceLabel(record)) : "Ręczna"}</span>`),
       field("Numer dokumentu", input("document_number", "text", record.document_number, "required")),
       field("Kontrahent", input("counterparty", "text", record.counterparty, "required")),
       field("NIP kontrahenta", input("counterparty_nip", "text", record.counterparty_nip, "inputmode=\"numeric\" placeholder=\"np. 5423261207\"")),
@@ -1587,7 +1608,18 @@ async function handleAction(element) {
     }
     if (action === "print-report") return window.print();
     if (action === "export-report") return exportReportCsv();
-    if (action === "test-ksef-demo") return await requestKsefConnectionTest("demo");
+    if (action === "set-ksef-environment") {
+      const environment = element.dataset.ksefEnvironment === "production" ? "production" : "demo";
+      if (environment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
+      state.ksefEnvironment = environment;
+      state.ksefPreview = [];
+      state.ksefPreviewMonth = "";
+      state.ksefSelectedNumbers.clear();
+      const page = document.querySelector("#page-content");
+      if (page && state.activeView === "invoices") page.innerHTML = renderInvoices();
+      return;
+    }
+    if (action === "test-ksef" || action === "test-ksef-demo") return await requestKsefConnectionTest(state.ksefEnvironment);
     if (action === "import-ksef-month") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "all");
     if (action === "import-ksef-sales") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "sales");
     if (action === "import-ksef-purchase") return await importKsefMonth(state.invoiceMonth || currentMonthKey(), "purchase");
@@ -1795,6 +1827,7 @@ async function deleteContract() {
 
 async function requestKsefConnectionTest(environment = "demo") {
   if (!canManageFinance()) throw new Error("Brak uprawnień do testu KSeF.");
+  if (environment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
   const response = await fetch("/api/ksef-test", {
@@ -1813,6 +1846,7 @@ async function requestKsefConnectionTest(environment = "demo") {
 
 async function requestKsefPreview(month) {
   if (!canManageFinance()) throw new Error("Brak uprawnień do podglądu KSeF.");
+  if (state.ksefEnvironment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
   const response = await fetch("/api/ksef-preview", {
@@ -1821,7 +1855,7 @@ async function requestKsefPreview(month) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
     },
-    body: JSON.stringify({ month }),
+    body: JSON.stringify({ month, environment: state.ksefEnvironment }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się pobrać podglądu KSeF.");
@@ -1829,12 +1863,15 @@ async function requestKsefPreview(month) {
   state.ksefPreviewMonth = data?.month || month;
   state.ksefPreviewLimited = Boolean(data?.limited);
   state.ksefSelectedNumbers.clear();
-  window.alert(data?.message || "Pobrano podgląd faktur z KSeF DEMO.");
+  window.alert(data?.message || `Pobrano podgląd faktur z ${ksefEnvironmentLabel()}.`);
   await loadView(state.supabase);
 }
 
 function selectAllKsefPreview() {
-  const imported = new Set(state.invoices.map((row) => row.ksef_number).filter(Boolean));
+  const imported = new Set(state.invoices
+    .filter((row) => row.ksef_environment === state.ksefEnvironment)
+    .map((row) => row.ksef_number)
+    .filter(Boolean));
   for (const row of state.ksefPreview) {
     if (!imported.has(row.ksefNumber)) state.ksefSelectedNumbers.add(row.ksefNumber);
   }
@@ -1844,12 +1881,13 @@ function selectAllKsefPreview() {
 
 async function importSelectedKsefPreview() {
   if (!canManageFinance()) throw new Error("Brak uprawnień do importu KSeF.");
+  if (state.ksefEnvironment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
   const month = state.ksefPreviewMonth;
   const ksefNumbers = state.ksefPreview
     .filter((row) => state.ksefSelectedNumbers.has(row.ksefNumber))
     .map((row) => row.ksefNumber);
   if (!month || !ksefNumbers.length) throw new Error("Zaznacz co najmniej jedną fakturę do importu.");
-  if (!window.confirm(`Zaimportować ${ksefNumbers.length} zaznaczonych faktur do rejestru PrądPlan? Zostaną dodane jako nieprzypisane.`)) return;
+  if (!window.confirm(`Zaimportować ${ksefNumbers.length} zaznaczonych faktur z ${ksefEnvironmentLabel()} do rejestru PrądPlan? Zostaną dodane jako nieprzypisane.`)) return;
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
   const response = await fetch("/api/ksef-import", {
@@ -1858,23 +1896,24 @@ async function importSelectedKsefPreview() {
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
     },
-    body: JSON.stringify({ month, ksefNumbers }),
+    body: JSON.stringify({ month, ksefNumbers, environment: state.ksefEnvironment }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się zaimportować wybranych faktur.");
   state.ksefSelectedNumbers.clear();
-  window.alert(data?.message || "Zaimportowano wybrane faktury z KSeF DEMO.");
+  window.alert(data?.message || `Zaimportowano wybrane faktury z ${ksefEnvironmentLabel()}.`);
   await loadView(state.supabase);
 }
 
 async function importKsefMonth(month, invoiceType = "all") {
   if (!canManageFinance()) throw new Error("Brak uprawnień do importu KSeF.");
+  if (state.ksefEnvironment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
   const typeLabel = invoiceType === "sales" ? "FV sprzedażowe" : invoiceType === "purchase" ? "FV zakupowe" : "wszystkie FV";
-  if (!window.confirm(`Zaimportować ${typeLabel} z KSeF DEMO za ${monthLabel(month)}? Dokumenty już obecne w PrądPlan zostaną pominięte.`)) return;
+  if (!window.confirm(`Zaimportować ${typeLabel} z ${ksefEnvironmentLabel()} za ${monthLabel(month)}? Dokumenty już obecne w PrądPlan w tym środowisku zostaną pominięte.`)) return;
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
 
-  setImportProgress(`Trwa pobieranie i importowanie: ${typeLabel}…`, true);
+  setImportProgress(`Trwa pobieranie i importowanie z ${ksefEnvironmentLabel()}: ${typeLabel}…`, true);
   try {
     const response = await fetch("/api/ksef-import", {
       method: "POST",
@@ -1882,13 +1921,13 @@ async function importKsefMonth(month, invoiceType = "all") {
         "Content-Type": "application/json",
         Authorization: `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ month, invoiceType }),
+      body: JSON.stringify({ month, invoiceType, environment: state.ksefEnvironment }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się zaimportować faktur z KSeF DEMO.");
+    if (!response.ok || data?.error) throw new Error(data?.error || `Nie udało się zaimportować faktur z ${ksefEnvironmentLabel()}.`);
     state.ksefSelectedNumbers.clear();
     if (["sales", "purchase"].includes(invoiceType)) state.invoiceTypeFilter = invoiceType;
-    window.alert(data?.message || "Zaimportowano faktury z KSeF DEMO.");
+    window.alert(data?.message || `Zaimportowano faktury z ${ksefEnvironmentLabel()}.`);
     await loadView(state.supabase);
   } finally {
     setImportProgress("", false);
@@ -1899,13 +1938,16 @@ async function showKsefInvoicePreview(id) {
   if (!canManageFinance()) throw new Error("Brak uprawnień do podglądu faktury KSeF.");
   const savedInvoice = state.invoices.find((row) => row.id === id);
   if (!savedInvoice?.ksef_number) throw new Error("Podgląd jest dostępny tylko dla faktur zaimportowanych z KSeF.");
+  const environment = savedInvoice.ksef_environment === "production" ? "production" : "demo";
+  const label = ksefEnvironmentLabel(environment);
+  if (environment === "production" && !isOwner()) throw new Error("Podgląd faktury z KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
   if (!invoicePreviewModal || !invoicePreviewContent) throw new Error("Nie można otworzyć okna podglądu.");
 
-  invoicePreviewContent.innerHTML = `<div class="invoice-preview-loading">Pobieranie wizualizacji faktury z KSeF DEMO…</div>`;
+  invoicePreviewContent.innerHTML = `<div class="invoice-preview-loading">Pobieranie wizualizacji faktury z ${escapeHtml(label)}…</div>`;
   invoicePreviewModal.showModal();
-  setImportProgress("Trwa pobieranie wizualizacji faktury z KSeF DEMO…", true);
+  setImportProgress(`Trwa pobieranie wizualizacji faktury z ${label}…`, true);
   try {
     const response = await fetch("/api/ksef-invoice", {
       method: "POST",
@@ -1917,9 +1959,9 @@ async function showKsefInvoicePreview(id) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data?.error || !data?.invoice) {
-      throw new Error(data?.error || "Nie udało się pobrać wizualizacji faktury z KSeF DEMO.");
+      throw new Error(data?.error || `Nie udało się pobrać wizualizacji faktury z ${label}.`);
     }
-    invoicePreviewContent.innerHTML = renderKsefInvoiceVisualization(data.invoice);
+    invoicePreviewContent.innerHTML = renderKsefInvoiceVisualization(data.invoice, data?.environment || environment);
   } catch (error) {
     invoicePreviewContent.innerHTML = `<div class="notice">${escapeHtml(error.message || "Nie udało się pobrać wizualizacji faktury.")}</div>`;
   } finally {
@@ -1927,12 +1969,11 @@ async function showKsefInvoicePreview(id) {
   }
 }
 
-function renderKsefInvoiceVisualization(invoice) {
+function renderKsefInvoiceVisualization(invoice, environment = "demo") {
   const currency = typeof invoice?.currency === "string" && invoice.currency ? invoice.currency : "PLN";
   const rows = Array.isArray(invoice?.items) ? invoice.items : [];
   const paymentDetails = [
     invoice?.dueDate ? `Termin płatności: <strong>${escapeHtml(date(invoice.dueDate))}</strong>` : "Termin płatności nie został podany w dokumencie.",
-    invoice?.payment?.form || invoice?.payment?.otherDescription ? `Forma płatności: <strong>${escapeHtml(paymentFormLabel(invoice?.payment?.form, invoice?.payment?.otherDescription))}</strong>` : "",
     invoice?.payment?.account ? `Rachunek: <strong>${escapeHtml(String(invoice.payment.account))}</strong>` : "",
   ].filter(Boolean).join("<br />");
   const itemRows = rows.length
@@ -1941,7 +1982,7 @@ function renderKsefInvoiceVisualization(invoice) {
 
   return `<article class="invoice-preview-paper">
     <header class="invoice-preview-paper-header">
-      <div><p class="eyebrow">KSEF DEMO / ${escapeHtml(String(invoice?.kind || "FAKTURA"))}</p><h3>Faktura ${escapeHtml(String(invoice?.number || "—"))}</h3></div>
+      <div><p class="eyebrow">${escapeHtml(ksefEnvironmentLabel(environment))} / ${escapeHtml(String(invoice?.kind || "FAKTURA"))}</p><h3>Faktura ${escapeHtml(String(invoice?.number || "—"))}</h3></div>
       <div class="invoice-preview-number"><span>Data wystawienia</span><strong>${escapeHtml(date(invoice?.issueDate))}</strong><span>Numer KSeF</span><strong>${escapeHtml(String(invoice?.ksefNumber || "—"))}</strong></div>
     </header>
     <div class="invoice-preview-party-grid">

@@ -1,6 +1,6 @@
-// PrądPlan / test uwierzytelnienia KSeF DEMO wykonywany w Node.js na Vercel.
-// Certyfikat, klucz i hasło są odczytywane wyłącznie z Vercel Environment
-// Variables. Ten endpoint nie pobiera ani nie zapisuje faktur.
+// PrądPlan / test uwierzytelnienia KSeF wykonywany w Node.js na Vercel.
+// Certyfikat, klucz i hasło są odczytywane wyłącznie z sekretów Vercel. Ten
+// endpoint nie pobiera, nie zapisuje ani nie wysyła faktur do KSeF.
 import { createClient } from "@supabase/supabase-js";
 import { Buffer } from "node:buffer";
 import { createPrivateKey } from "node:crypto";
@@ -9,7 +9,10 @@ import { KSeFClient } from "ksef-client-ts";
 type VercelRequest = {
   method?: string;
   headers: Record<string, string | string[] | undefined>;
+  body?: unknown;
 };
+
+type KsefEnvironment = "demo" | "production";
 
 type VercelResponse = {
   status: (code: number) => VercelResponse;
@@ -24,7 +27,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return response.status(405).json({ error: "Metoda niedozwolona." });
   }
 
+  let environment: KsefEnvironment = "demo";
   try {
+    environment = readEnvironment(request.body);
     const token = authorizationToken(request.headers.authorization);
     if (!token) return response.status(401).json({ error: "Brak sesji użytkownika." });
 
@@ -49,26 +54,51 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!profile?.active || !["owner", "accountant"].includes(profile.role)) {
       return response.status(403).json({ error: "Brak uprawnień do testu KSeF." });
     }
+    if (environment === "production" && profile.role !== "owner") {
+      return response.status(403).json({ error: "Test KSeF PRODUKCJA może uruchomić wyłącznie właściciel." });
+    }
 
-    const certificatePem = certificateToPem(requiredEnvironment("KSEF_DEMO_CERTIFICATE_BASE64"));
-    const privateKeyPem = privateKeyToPem(
-      requiredEnvironment("KSEF_DEMO_PRIVATE_KEY_BASE64"),
-      process.env.KSEF_DEMO_PRIVATE_KEY_PASSWORD || "",
-    );
-
-    const client = new KSeFClient({ environment: "DEMO" });
-    await client.loginWithCertificate(certificatePem, privateKeyPem, requiredEnvironment("KSEF_DEMO_NIP"));
+    const credentials = credentialsFor(environment);
+    const client = new KSeFClient({ environment: credentials.clientEnvironment });
+    await client.loginWithCertificate(credentials.certificatePem, credentials.privateKeyPem, credentials.nip);
 
     return response.status(200).json({
-      message: "Połączenie z KSeF DEMO zostało potwierdzone. Nie pobrano ani nie zapisano faktur.",
+      environment,
+      message: `Połączenie z ${ksefLabel(environment)} zostało potwierdzone. Nie pobrano, nie zapisano ani nie wysłano faktur.`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
-    console.error("KSeF DEMO connection test failed", diagnostic);
+    console.error(`${ksefLabel(environment)} connection test failed`, diagnostic);
     return response.status(422).json({
-      error: "Test połączenia KSeF DEMO nie powiódł się. Sprawdź logi funkcji Vercel.",
+      error: `Test połączenia ${ksefLabel(environment)} nie powiódł się. Sprawdź logi funkcji Vercel.`,
     });
   }
+}
+
+function readEnvironment(body: unknown): KsefEnvironment {
+  const payload = typeof body === "string" ? JSON.parse(body) : body;
+  const value = typeof (payload as { environment?: unknown } | null)?.environment === "string"
+    ? (payload as { environment: string }).environment.trim().toLowerCase()
+    : "demo";
+  if (value !== "demo" && value !== "production") throw new Error("Nieprawidłowe środowisko KSeF.");
+  return value;
+}
+
+function credentialsFor(environment: KsefEnvironment) {
+  const prefix = environment === "production" ? "KSEF_PROD" : "KSEF_DEMO";
+  return {
+    certificatePem: certificateToPem(requiredEnvironment(`${prefix}_CERTIFICATE_BASE64`)),
+    privateKeyPem: privateKeyToPem(
+      requiredEnvironment(`${prefix}_PRIVATE_KEY_BASE64`),
+      process.env[`${prefix}_PRIVATE_KEY_PASSWORD`] || "",
+    ),
+    nip: requiredEnvironment(`${prefix}_NIP`),
+    clientEnvironment: environment === "production" ? "PROD" as const : "DEMO" as const,
+  };
+}
+
+function ksefLabel(environment: KsefEnvironment) {
+  return environment === "production" ? "KSeF PRODUKCJA" : "KSeF DEMO";
 }
 
 function authorizationToken(header: string | string[] | undefined) {
