@@ -157,6 +157,7 @@ table { width: 100%; border-collapse: collapse; min-width: 700px; }
 .invoice-register-table, .inbox-table { min-width: 0; table-layout: fixed; }
 .invoice-register-table th, .invoice-register-table td { padding-left: 12px; padding-right: 12px; }
 .invoice-register-table td, .inbox-table td { overflow-wrap: anywhere; }
+.invoice-counterparty { display: block; overflow: hidden; cursor: help; text-overflow: ellipsis; white-space: nowrap; }
 th { padding: 14px 20px; color: #65696b; background: #fbfbfa; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
 td { padding: 17px 20px; border-top: 1px solid #ececea; font-size: 14px; vertical-align: top; }
 td strong { display: block; }
