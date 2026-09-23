@@ -25,9 +25,11 @@ const invoiceAllocationTotal = document.querySelector("#invoice-allocation-total
 const invoiceAllocationError = document.querySelector("#invoice-allocation-error");
 const invoiceAttachmentsModal = document.querySelector("#invoice-attachments-modal");
 const invoiceAttachmentsContent = document.querySelector("#invoice-attachments-content");
-// Maks. 8 krótkich pakietów po 28 XML-i. Wystarcza dla 200 dokumentów
-// (100 zakupowych i 100 sprzedażowych) bez długiego pojedynczego wywołania.
-const MAX_KSEF_DETAIL_BATCHES = 8;
+// Metadane całego miesiąca zapisujemy od razu. XML-e (pozycje i terminy)
+// uzupełniamy automatycznie w małych pakietach, aby nie przekroczyć limitu
+// czasu Vercel nawet w miesiącach z dużą liczbą faktur.
+const KSEF_XML_DETAILS_PER_REQUEST = 12;
+const KSEF_XML_MAX_RETRIES = 2;
 
 const viewMeta = {
   dashboard: { label: "Przegląd", icon: "▦" },
@@ -2034,10 +2036,21 @@ async function importSelectedKsefPreview() {
   if (!window.confirm(`Zaimportować ${ksefNumbers.length} zaznaczonych faktur z ${ksefEnvironmentLabel()} do rejestru PrądPlan? Zostaną dodane jako nieprzypisane.`)) return;
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
-  const data = await requestKsefImport(session.access_token, { month, ksefNumbers, environment: state.ksefEnvironment });
-  state.ksefSelectedNumbers.clear();
-  window.alert(data?.message || `Zaimportowano wybrane faktury z ${ksefEnvironmentLabel()}.`);
-  await loadView(state.supabase);
+  setImportProgress(`Importowanie ${ksefNumbers.length} zaznaczonych faktur z ${ksefEnvironmentLabel()}…`, true);
+  try {
+    const data = await requestKsefImport(session.access_token, { month, ksefNumbers, environment: state.ksefEnvironment });
+    const details = await synchronizeKsefImportDetails(session.access_token, {
+      month,
+      invoiceType: "all",
+      environment: state.ksefEnvironment,
+      ksefNumbers: data?.pendingKsefNumbers,
+    });
+    state.ksefSelectedNumbers.clear();
+    window.alert(importKsefCompletionMessage(data?.imported || 0, details, ksefNumbers.length));
+    await loadView(state.supabase);
+  } finally {
+    setImportProgress("", false);
+  }
 }
 
 async function requestKsefImport(accessToken, payload) {
@@ -2054,6 +2067,94 @@ async function requestKsefImport(accessToken, payload) {
   return data;
 }
 
+async function synchronizeKsefImportDetails(accessToken, { month, invoiceType, environment, ksefNumbers }) {
+  const initialNumbers = [...new Set((Array.isArray(ksefNumbers) ? ksefNumbers : [])
+    .filter((number) => typeof number === "string" && number.trim()))];
+  if (!initialNumbers.length) {
+    return { initial: 0, synchronized: 0, dueDatesUpdated: 0, automaticallyAssigned: 0, failedNumbers: [] };
+  }
+
+  const queue = initialNumbers.map((ksefNumber) => ({ ksefNumber, attempt: 0 }));
+  const resolved = new Set();
+  const failedNumbers = new Set();
+  let synchronized = 0;
+  let dueDatesUpdated = 0;
+  let automaticallyAssigned = 0;
+
+  while (queue.length) {
+    const batch = queue.splice(0, KSEF_XML_DETAILS_PER_REQUEST);
+    const completed = resolved.size;
+    setImportProgress(`Uzupełnianie XML, pozycji i terminów płatności: ${completed + 1}–${Math.min(completed + batch.length, initialNumbers.length)} z ${initialNumbers.length}…`, true);
+    let data = null;
+    try {
+      data = await requestKsefImport(accessToken, {
+        month,
+        invoiceType,
+        environment,
+        syncDetails: true,
+        ksefNumbers: batch.map((item) => item.ksefNumber),
+      });
+      synchronized += Number(data?.detailsSynced || 0);
+      dueDatesUpdated += Number(data?.dueDatesUpdated || 0);
+      automaticallyAssigned += Number(data?.automaticallyAssigned || 0);
+    } catch (error) {
+      console.warn("KSeF XML batch synchronization failed", error);
+    }
+
+    // Serwer zwraca wyłącznie numery, dla których XML nie został pobrany.
+    // Nieudane zapytanie HTTP traktujemy jak nieudaną całą partię i ponawiamy
+    // ją automatycznie, lecz najwyżej dwa razy dla każdego dokumentu.
+    const retryNumbers = data
+      ? new Set(Array.isArray(data.pendingKsefNumbers) ? data.pendingKsefNumbers : [])
+      : new Set(batch.map((item) => item.ksefNumber));
+    for (const item of batch) {
+      if (!retryNumbers.has(item.ksefNumber)) {
+        resolved.add(item.ksefNumber);
+        continue;
+      }
+      if (item.attempt + 1 < KSEF_XML_MAX_RETRIES) {
+        queue.push({ ksefNumber: item.ksefNumber, attempt: item.attempt + 1 });
+      } else {
+        failedNumbers.add(item.ksefNumber);
+      }
+    }
+    if (queue.length) await ksefSyncPause(120);
+  }
+
+  return {
+    initial: initialNumbers.length,
+    synchronized,
+    dueDatesUpdated,
+    automaticallyAssigned,
+    failedNumbers: [...failedNumbers],
+  };
+}
+
+function importKsefCompletionMessage(imported, details, fallbackCount = 0) {
+  const importedCount = Number(imported || 0);
+  const knownCount = importedCount || Number(fallbackCount || 0);
+  const importedMessage = importedCount
+    ? `Zaimportowano ${importedCount} faktur do rejestru PrądPlan.`
+    : `Sprawdzono ${knownCount} faktur — duplikaty zostały pominięte.`;
+  const detailsMessage = details?.initial
+    ? ` Uzupełniono XML, pozycje i terminy płatności dla ${details.synchronized} z ${details.initial} faktur.`
+    : "";
+  const dueDateMessage = details?.dueDatesUpdated
+    ? ` Odczytano ${details.dueDatesUpdated} nowych terminów płatności.`
+    : "";
+  const rulesMessage = details?.automaticallyAssigned
+    ? ` Reguły automatycznie przypisały ${details.automaticallyAssigned} faktur.`
+    : "";
+  const retryMessage = details?.failedNumbers?.length
+    ? ` KSeF nie udostępnił XML dla ${details.failedNumbers.length} faktur po dwóch próbach; faktury są już w rejestrze, a szczegóły zostaną ponowione przy kolejnym imporcie.`
+    : "";
+  return `${importedMessage}${detailsMessage}${dueDateMessage}${rulesMessage}${retryMessage}`;
+}
+
+function ksefSyncPause(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 async function importKsefMonth(month, invoiceType = "all") {
   if (!canManageFinance()) throw new Error("Brak uprawnień do importu KSeF.");
   if (state.ksefEnvironment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
@@ -2064,32 +2165,18 @@ async function importKsefMonth(month, invoiceType = "all") {
 
   setImportProgress(`Trwa pobieranie i importowanie z ${ksefEnvironmentLabel()}: ${typeLabel}…`, true);
   try {
-    let totalImported = 0;
-    let totalDetailsSynced = 0;
-    let detailsPending = 0;
-    let lastMessage = "";
-    let batchesCompleted = 0;
-
-    for (let batch = 0; batch < MAX_KSEF_DETAIL_BATCHES; batch += 1) {
-      setImportProgress(batch
-        ? `Uzupełnianie terminów płatności i pozycji FV — pakiet ${batch + 1}…`
-        : `Trwa pobieranie i importowanie z ${ksefEnvironmentLabel()}: ${typeLabel}…`, true);
-      const data = await requestKsefImport(session.access_token, { month, invoiceType, environment: state.ksefEnvironment });
-      totalImported += Number(data?.imported || 0);
-      totalDetailsSynced += Number(data?.detailsSynced || 0);
-      detailsPending = Number(data?.detailsPending || 0);
-      lastMessage = data?.message || lastMessage;
-      batchesCompleted += 1;
-      // Zatrzymujemy pętlę, gdy wszystko jest gotowe lub KSeF nie pozwolił
-      // odczytać żadnej pozycji w danym pakiecie.
-      if (!detailsPending || !Number(data?.detailsSynced || 0)) break;
-    }
+    const data = await requestKsefImport(session.access_token, { month, invoiceType, environment: state.ksefEnvironment });
     state.ksefSelectedNumbers.clear();
     if (["sales", "purchase"].includes(invoiceType)) state.invoiceTypeFilter = invoiceType;
-    const batchMessage = batchesCompleted > 1
-      ? `Zaimportowano ${totalImported} faktur do rejestru PrądPlan. Uzupełniono dane XML, pozycje i terminy płatności dla ${totalDetailsSynced} faktur.${detailsPending ? ` Pozostało ${detailsPending} dokumentów do uzupełnienia — uruchom import ponownie.` : ""}`
-      : lastMessage || `Zaimportowano faktury z ${ksefEnvironmentLabel()}.`;
-    window.alert(batchMessage);
+    // Rejestr jest gotowy od razu, zanim zacznie się wolniejsze pobieranie XML.
+    await loadView(state.supabase);
+    const details = await synchronizeKsefImportDetails(session.access_token, {
+      month,
+      invoiceType,
+      environment: state.ksefEnvironment,
+      ksefNumbers: data?.pendingKsefNumbers,
+    });
+    window.alert(importKsefCompletionMessage(data?.imported || 0, details));
     await loadView(state.supabase);
   } finally {
     setImportProgress("", false);

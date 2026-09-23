@@ -36,6 +36,11 @@ type ExistingInvoice = {
   ksef_number: string | null;
   due_date: string | null;
   ksef_details_synced_at: string | null;
+  invoice_type?: "sales" | "purchase";
+  counterparty?: string | null;
+  counterparty_nip?: string | null;
+  document_number?: string | null;
+  allocation?: "contract" | "company" | "unassigned";
 };
 
 type KsefEnvironment = "demo" | "production";
@@ -43,6 +48,10 @@ type KsefEnvironment = "demo" | "production";
 type InvoiceToImport = {
   invoice: KsefInvoice;
   type: "sales" | "purchase";
+};
+
+type KsefDetailCandidate = {
+  ksefNumber: string;
 };
 
 type AssignmentRule = {
@@ -57,12 +66,13 @@ type AssignmentRule = {
 };
 
 const PAGE_SIZE = 100;
-// Jedno wywołanie Vercel uzupełnia ograniczoną partię XML. Dzięki temu duży
-// miesiąc nie blokuje zapisu metadanych ani nie wpada w limit 300 sekund.
-// 28 dokumentów przy 4 workerach oznacza maksymalnie 7 odczytów na workera.
-const XML_DETAILS_PER_BATCH = 28;
-const XML_WORKER_COUNT = 4;
-const XML_DOWNLOAD_TIMEOUT_MS = 25_000;
+const MAX_METADATA_PAGES = 30;
+// XML faktury jest znacznie wolniejszy od metadanych. Mała partia ogranicza
+// pojedyncze wywołanie Vercel do maks. czterech odczytów na workera, dzięki
+// czemu nawet wolna odpowiedź KSeF nie blokuje całego miesięcznego importu.
+const XML_DETAILS_PER_BATCH = 12;
+const XML_WORKER_COUNT = 3;
+const XML_DOWNLOAD_TIMEOUT_MS = 15_000;
 
 class KsefXmlTimeoutError extends Error {
   constructor(message: string) {
@@ -84,7 +94,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!token) return response.status(401).json({ error: "Brak sesji użytkownika." });
 
     const importRequest = readImportRequest(request.body);
-    const { month, ksefNumbers, invoiceType } = importRequest;
+    const { month, ksefNumbers, invoiceType, syncDetails } = importRequest;
     environment = importRequest.environment;
     const projectUrl = requiredEnvironment("SUPABASE_URL");
     const publishableKey = requiredEnvironment("SUPABASE_PUBLISHABLE_KEY");
@@ -113,6 +123,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(403).json({ error: "Import z KSeF PRODUKCJA jest jeszcze zablokowany. Najpierw potwierdź test połączenia, a następnie włącz sekret KSEF_PROD_IMPORT_ENABLED=true w Vercel." });
     }
 
+    // Ten tryb nie odpyta ponownie listy faktur za cały miesiąc. Dostaje tylko
+    // numery już zapisanych dokumentów i uzupełnia ich XML w krótkiej partii.
+    if (syncDetails) {
+      return synchronizeInvoiceDetails({
+        response,
+        callerClient,
+        environment,
+        ksefNumbers,
+      });
+    }
+
     const { data: assignmentRuleRows, error: assignmentRulesError } = await callerClient
       .from("invoice_assignment_rules")
       .select("active, priority, invoice_type, match_nip, match_text, target_type, contract_id, company_category")
@@ -128,17 +149,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const { from, to } = monthRange(month);
     const [sales, purchases] = await Promise.all([
-      invoiceType === "purchase" ? Promise.resolve(null) : client.invoices.queryInvoiceMetadata(new InvoiceQueryFilterBuilder().withSubjectType("Subject1").withDateRange("Issue", from, to).build(), 0, PAGE_SIZE, "Desc"),
-      invoiceType === "sales" ? Promise.resolve(null) : client.invoices.queryInvoiceMetadata(new InvoiceQueryFilterBuilder().withSubjectType("Subject2").withDateRange("Issue", from, to).build(), 0, PAGE_SIZE, "Desc"),
+      invoiceType === "purchase" ? Promise.resolve([]) : queryAllInvoiceMetadata(client, new InvoiceQueryFilterBuilder().withSubjectType("Subject1").withDateRange("Issue", from, to).build()),
+      invoiceType === "sales" ? Promise.resolve([]) : queryAllInvoiceMetadata(client, new InvoiceQueryFilterBuilder().withSubjectType("Subject2").withDateRange("Issue", from, to).build()),
     ]);
 
     const importAllForMonth = ksefNumbers.length === 0;
     const requested = new Set(ksefNumbers);
     const current = new Map<string, InvoiceToImport>();
-    for (const invoice of sales?.invoices || []) {
+    for (const invoice of sales) {
       if (importAllForMonth || requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "sales" });
     }
-    for (const invoice of purchases?.invoices || []) {
+    for (const invoice of purchases) {
       if (importAllForMonth || requested.has(invoice.ksefNumber)) current.set(invoice.ksefNumber, { invoice, type: "purchase" });
     }
 
@@ -165,20 +186,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
         .map((row) => [row.ksef_number as string, row]),
     );
 
-    // Metadane KSeF nie zawierają terminu płatności ani opisu pozycji. XML
-    // pobieramy w małych, równoległych partiach; reszta jest dokończona przez
-    // kolejne krótkie wywołanie z przeglądarki, bez ryzyka timeoutu Vercel.
+    // Metadane KSeF nie zawierają terminu płatności ani opisu pozycji. Najpierw
+    // zapisujemy całą listę dokumentów — bez czekania na XML. Przeglądarka
+    // automatycznie uruchomi potem krótkie, odporne na timeouty pakiety XML.
     const detailCandidates = [...current.values()].filter(({ invoice }) => {
       const saved = existingByKsefNumber.get(invoice.ksefNumber);
       return !saved || !saved.ksef_details_synced_at;
     });
-    const dueDateResult = await loadDueDates(
-      client,
-      detailCandidates.slice(0, XML_DETAILS_PER_BATCH),
-    );
-    const dueDates = dueDateResult.values;
-    const itemSummaries = dueDateResult.itemSummaries;
-    const detailsSyncedAt = new Date().toISOString();
 
     const toInsert = [...current.values()]
       .filter(({ invoice }) => !existingByKsefNumber.has(invoice.ksefNumber))
@@ -186,11 +200,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
         invoice,
         type,
         caller.user.id,
-        dueDates.get(invoice.ksefNumber) || null,
-        itemSummaries.get(invoice.ksefNumber) || "",
-        matchingRule(invoice, type, itemSummaries.get(invoice.ksefNumber) || "", assignmentRules),
+        null,
+        "",
+        matchingRule(invoice, type, "", assignmentRules),
         environment,
-        dueDateResult.synchronized.has(invoice.ksefNumber) ? detailsSyncedAt : null,
+        null,
       ));
 
     if (toInsert.length) {
@@ -200,46 +214,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
       if (insertError) throw insertError;
     }
 
-    let dueDatesUpdated = 0;
-    for (const saved of existingByKsefNumber.values()) {
-      if (!saved.ksef_number || !dueDateResult.synchronized.has(saved.ksef_number)) continue;
-      const dueDate = !saved.due_date ? dueDates.get(saved.ksef_number) : null;
-      const itemSummary = itemSummaries.get(saved.ksef_number);
-      const updatePayload: Record<string, string> = { ksef_details_synced_at: detailsSyncedAt };
-      if (dueDate) updatePayload.due_date = dueDate;
-      if (itemSummary) updatePayload.ksef_item_summary = itemSummary;
-      const { error: updateError } = await callerClient
-        .from("invoices")
-        .update(updatePayload)
-        .eq("id", saved.id);
-      if (updateError) throw updateError;
-      if (dueDate) dueDatesUpdated += 1;
-    }
-
     const skipped = existingByKsefNumber.size + missingCount;
     const automaticallyAssigned = toInsert.filter((row) => row.allocation !== "unassigned").length;
     const skippedMessage = missingCount
       ? `; pominięto ${skipped} już zapisanych lub niedostępnych pozycji`
       : existingByKsefNumber.size ? `; pominięto ${existingByKsefNumber.size} już zapisanych pozycji` : "";
-    const dueDateMessage = dueDatesUpdated ? ` Uzupełniono termin płatności w ${dueDatesUpdated} zapisanych pozycjach.` : "";
-    const failedDetails = Math.max(0, dueDateResult.failures - dueDateResult.timeouts);
-    const dueDateWarning = failedDetails
-      ? ` Nie udało się odczytać terminu płatności dla ${failedDetails} faktur; spróbuj ponownie po sprawdzeniu logów Vercel.`
-      : "";
-    const timeoutWarning = dueDateResult.timeouts
-      ? ` KSeF nie odpowiedział na czas dla ${dueDateResult.timeouts} faktur; ich szczegóły zostaną ponowione przy następnym imporcie.`
-      : "";
-    const detailsPending = Math.max(0, detailCandidates.length - dueDateResult.synchronized.size);
+    const pendingKsefNumbers = detailCandidates.map(({ invoice }) => invoice.ksefNumber);
+    const detailsPending = pendingKsefNumbers.length;
     const detailsMessage = detailCandidates.length
-      ? ` Odczytano dodatkowe dane XML dla ${dueDateResult.synchronized.size} z ${detailCandidates.length} faktur.${detailsPending ? ` Pozostało ${detailsPending} do krótkiego uzupełnienia.` : ""}`
+      ? ` Dane XML, pozycje i terminy płatności zostaną automatycznie uzupełnione dla ${detailsPending} faktur.`
       : "";
     return response.status(200).json({
       imported: toInsert.length,
       skipped,
-      dueDatesUpdated,
-      detailsSynced: dueDateResult.synchronized.size,
+      dueDatesUpdated: 0,
+      detailsSynced: 0,
       detailsPending,
-      message: `Zaimportowano ${toInsert.length} (${invoiceTypeLabel(invoiceType)}) do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${dueDateMessage}${detailsMessage}${dueDateWarning}${timeoutWarning}`,
+      pendingKsefNumbers,
+      message: `Zaimportowano ${toInsert.length} (${invoiceTypeLabel(invoiceType)}) do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${detailsMessage}`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -248,6 +240,138 @@ export default async function handler(request: VercelRequest, response: VercelRe
       error: `Nie udało się zaimportować wybranych faktur z ${ksefLabel(environment)}. Sprawdź logi funkcji Vercel.`,
     });
   }
+}
+
+async function queryAllInvoiceMetadata(
+  client: KSeFClient,
+  filters: Parameters<KSeFClient["invoices"]["queryInvoiceMetadata"]>[0],
+) {
+  const invoices: KsefInvoice[] = [];
+  let offset = 0;
+
+  // KSeF zwraca metadane stronicowane po 100 rekordów. Bez tej pętli
+  // dokumenty od 101. pozycji mogły nie trafić do importu miesiąca.
+  for (let pageIndex = 0; pageIndex < MAX_METADATA_PAGES; pageIndex += 1) {
+    const page = await client.invoices.queryInvoiceMetadata(filters, offset, PAGE_SIZE, "Desc");
+    const pageInvoices = (page.invoices || []) as KsefInvoice[];
+    invoices.push(...pageInvoices);
+    if (!page.hasMore) return invoices;
+    if (!pageInvoices.length) {
+      throw new Error("KSeF zgłosił kolejną stronę metadanych, ale nie zwrócił żadnej faktury.");
+    }
+    offset += pageInvoices.length;
+  }
+
+  throw new Error(`KSeF zwrócił więcej niż ${MAX_METADATA_PAGES * PAGE_SIZE} faktur jednego rodzaju w miesiącu. Zawęź okres importu.`);
+}
+
+async function synchronizeInvoiceDetails({
+  response,
+  callerClient,
+  environment,
+  ksefNumbers,
+}: {
+  response: VercelResponse;
+  callerClient: ReturnType<typeof createClient>;
+  environment: KsefEnvironment;
+  ksefNumbers: string[];
+}) {
+  if (!ksefNumbers.length) {
+    throw new Error("Brakuje numerów faktur do uzupełnienia danych XML.");
+  }
+  if (ksefNumbers.length > XML_DETAILS_PER_BATCH) {
+    throw new Error(`Jednorazowo można uzupełnić maksymalnie ${XML_DETAILS_PER_BATCH} faktur.`);
+  }
+
+  const { data: savedRows, error: savedRowsError } = await callerClient
+    .from("invoices")
+    .select("id, ksef_number, due_date, ksef_details_synced_at, invoice_type, counterparty, counterparty_nip, document_number, allocation")
+    .in("ksef_number", ksefNumbers)
+    .eq("ksef_environment", environment);
+  if (savedRowsError) throw savedRowsError;
+
+  const pendingRows = ((savedRows || []) as ExistingInvoice[])
+    .filter((row) => Boolean(row.ksef_number) && !row.ksef_details_synced_at);
+  if (!pendingRows.length) {
+    return response.status(200).json({
+      detailsSynced: 0,
+      dueDatesUpdated: 0,
+      automaticallyAssigned: 0,
+      detailsPending: 0,
+      pendingKsefNumbers: [],
+      message: "Dane XML wskazanych faktur są już aktualne.",
+    });
+  }
+
+  const { data: assignmentRuleRows, error: assignmentRulesError } = await callerClient
+    .from("invoice_assignment_rules")
+    .select("active, priority, invoice_type, match_nip, match_text, target_type, contract_id, company_category")
+    .eq("active", true)
+    .order("priority", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (assignmentRulesError) throw assignmentRulesError;
+  const assignmentRules = (assignmentRuleRows || []) as AssignmentRule[];
+
+  const credentials = credentialsFor(environment);
+  const client = new KSeFClient({ environment: credentials.clientEnvironment });
+  await client.loginWithCertificate(credentials.certificatePem, credentials.privateKeyPem, credentials.nip);
+
+  const dueDateResult = await loadDueDates(
+    client,
+    pendingRows
+      .filter((row): row is ExistingInvoice & { ksef_number: string } => Boolean(row.ksef_number))
+      .map((row) => ({ ksefNumber: row.ksef_number })),
+  );
+  const detailsSyncedAt = new Date().toISOString();
+  let dueDatesUpdated = 0;
+  let automaticallyAssigned = 0;
+
+  for (const saved of pendingRows) {
+    if (!saved.ksef_number || !dueDateResult.synchronized.has(saved.ksef_number)) continue;
+    const dueDate = !saved.due_date ? dueDateResult.values.get(saved.ksef_number) : null;
+    const itemSummary = dueDateResult.itemSummaries.get(saved.ksef_number);
+    const rule = saved.allocation === "unassigned"
+      ? matchingSavedInvoice(saved, itemSummary || "", assignmentRules)
+      : null;
+    const updatePayload: Record<string, string | null> = { ksef_details_synced_at: detailsSyncedAt };
+    if (dueDate) updatePayload.due_date = dueDate;
+    if (itemSummary) updatePayload.ksef_item_summary = itemSummary;
+    if (rule?.target_type === "contract") {
+      updatePayload.allocation = "contract";
+      updatePayload.contract_id = rule.contract_id;
+      automaticallyAssigned += 1;
+    }
+    if (rule?.target_type === "company") {
+      updatePayload.allocation = "company";
+      updatePayload.company_category = rule.company_category;
+      automaticallyAssigned += 1;
+    }
+    const { error: updateError } = await callerClient
+      .from("invoices")
+      .update(updatePayload)
+      .eq("id", saved.id);
+    if (updateError) throw updateError;
+    if (dueDate) dueDatesUpdated += 1;
+  }
+
+  const pendingKsefNumbers = pendingRows
+    .map((row) => row.ksef_number)
+    .filter((number): number is string => Boolean(number) && !dueDateResult.synchronized.has(number));
+  const failedDetails = Math.max(0, dueDateResult.failures - dueDateResult.timeouts);
+  const warning = dueDateResult.timeouts
+    ? ` KSeF nie odpowiedział na czas dla ${dueDateResult.timeouts} faktur; system automatycznie ponowi ich odczyt.`
+    : failedDetails
+      ? ` Nie udało się odczytać XML dla ${failedDetails} faktur; system automatycznie ponowi ich odczyt.`
+      : "";
+
+  return response.status(200).json({
+    detailsSynced: dueDateResult.synchronized.size,
+    dueDatesUpdated,
+    automaticallyAssigned,
+    detailsPending: pendingKsefNumbers.length,
+    pendingKsefNumbers,
+    message: `Uzupełniono dane XML dla ${dueDateResult.synchronized.size} z ${pendingRows.length} faktur.${warning}`,
+  });
 }
 
 function invoicePayload(
@@ -292,7 +416,7 @@ function invoicePayload(
   };
 }
 
-async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
+async function loadDueDates(client: KSeFClient, invoices: KsefDetailCandidate[]) {
   const values = new Map<string, string>();
   const itemSummaries = new Map<string, string>();
   const synchronized = new Set<string>();
@@ -307,22 +431,20 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
     while (nextIndex < invoices.length) {
       const item = invoices[nextIndex++];
       try {
-        const xml = await downloadInvoiceXml(client, item.invoice.ksefNumber);
+        const xml = await downloadInvoiceXml(client, item.ksefNumber);
         const dueDate = paymentDueDateFromXml(xml);
-        if (dueDate) values.set(item.invoice.ksefNumber, dueDate);
+        if (dueDate) values.set(item.ksefNumber, dueDate);
         const itemSummary = invoiceItemSummaryFromXml(xml);
-        if (itemSummary) itemSummaries.set(item.invoice.ksefNumber, itemSummary);
-        synchronized.add(item.invoice.ksefNumber);
+        if (itemSummary) itemSummaries.set(item.ksefNumber, itemSummary);
+        synchronized.add(item.ksefNumber);
       } catch (error) {
         failures += 1;
         const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
-        console.warn("KSeF payment due date skipped", item.invoice.ksefNumber, diagnostic);
-        // Nie dokładamy kolejnych nieprzerwanych zapytań do tego samego
-        // workera. Pozostałe dokumenty zostaną dokończone przy kolejnym,
-        // krótkim wywołaniu importu.
+        console.warn("KSeF payment due date skipped", item.ksefNumber, diagnostic);
+        // Błąd jednej FV nie zatrzymuje pozostałych dokumentów z partii.
+        // Tylko ten konkretny numer wróci do automatycznej kolejki ponowień.
         if (error instanceof KsefXmlTimeoutError) {
           timeouts += 1;
-          return;
         }
       }
     }
@@ -342,6 +464,25 @@ function matchingRule(invoice: KsefInvoice, type: "sales" | "purchase", itemSumm
     if (!rule.active || (rule.invoice_type && rule.invoice_type !== type)) return false;
     // FV sprzedażowe są przychodem kontraktowym — nigdy nie kierujemy ich
     // automatycznie do kategorii kosztów firmowych.
+    if (type === "sales" && rule.target_type !== "contract") return false;
+    const nipMatches = !rule.match_nip || normalizeNip(rule.match_nip) === nip;
+    const text = normalizeMatchText(rule.match_text || "");
+    const textMatches = !text || searchable.includes(text);
+    return nipMatches && textMatches;
+  }) || null;
+}
+
+function matchingSavedInvoice(invoice: ExistingInvoice, itemSummary: string, rules: AssignmentRule[]) {
+  const type = invoice.invoice_type;
+  if (type !== "sales" && type !== "purchase") return null;
+  const nip = normalizeNip(invoice.counterparty_nip || "");
+  const searchable = normalizeMatchText([
+    invoice.counterparty || "",
+    invoice.document_number || "",
+    itemSummary,
+  ].join(" "));
+  return rules.find((rule) => {
+    if (!rule.active || (rule.invoice_type && rule.invoice_type !== type)) return false;
     if (type === "sales" && rule.target_type !== "contract") return false;
     const nipMatches = !rule.match_nip || normalizeNip(rule.match_nip) === nip;
     const text = normalizeMatchText(rule.match_text || "");
@@ -487,11 +628,16 @@ function readImportRequest(body: unknown) {
     ? (payload as { invoiceType: string }).invoiceType.trim()
     : "all";
   if (!["all", "sales", "purchase"].includes(requestedType)) throw new Error("Nieprawidłowy rodzaj faktur do importu.");
+  const syncDetails = (payload as { syncDetails?: unknown } | null)?.syncDetails === true;
+  if (syncDetails && !ksefNumbers.length) {
+    throw new Error("Brakuje numerów faktur do uzupełnienia danych XML.");
+  }
   return {
     month,
     ksefNumbers,
     invoiceType: requestedType as "all" | "sales" | "purchase",
     environment: requestedEnvironment as KsefEnvironment,
+    syncDetails,
   };
 }
 
