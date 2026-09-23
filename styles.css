@@ -115,6 +115,7 @@ html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
 .icon-button { width: 38px; height: 38px; border: 0; background: transparent; font-size: 27px; line-height: 1; }
 
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 30px; }
+.invoice-metric-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .metric { min-height: 168px; padding: 26px 27px; border: 1px solid var(--line); background: var(--white); }
 .metric-label { color: #676b6e; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .metric-value { margin: 28px 0 12px; font-size: 31px; font-weight: 800; letter-spacing: -.05em; }
@@ -291,7 +292,7 @@ textarea { min-height: 85px; resize: vertical; }
 .invoice-allocation-total.is-invalid { border-color: #e7c1bf; color: #a13535; background: #fff5f4; }
 .allocation-summary { display: grid; gap: 4px; }
 .allocation-summary strong { color: var(--ink); }
-.inbox-panel, .rules-panel { margin-bottom: 30px; }
+.inbox-panel, .rules-panel, .invoice-corrections-panel { margin-bottom: 30px; }
 .inbox-table td .tag { margin-top: 4px; }
 .invoice-preview-modal { width: min(980px, calc(100% - 28px)); max-height: min(880px, calc(100dvh - 28px)); overflow: auto; }
 .invoice-preview-shell { padding: 28px; }

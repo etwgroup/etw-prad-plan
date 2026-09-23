@@ -529,20 +529,23 @@ function renderInvoices() {
   const activeType = ["all", "purchase", "sales"].includes(state.invoiceTypeFilter) ? state.invoiceTypeFilter : "all";
   const filteredInvoices = activeType === "all" ? visibleInvoices : visibleInvoices.filter((row) => row.invoice_type === activeType);
   const unassigned = filteredInvoices.filter(invoiceNeedsResolution);
+  const corrections = filteredInvoices.filter(invoiceIsCorrection);
   const recentRuns = state.importRuns.slice(0, 5);
   return `
     ${heading("KSeF / REJESTR FAKTUR", "Faktury", "Faktury zakupowe i sprzedażowe. Każdą pozycję można przypisać do kontraktu lub kosztów firmy.", canAdd ? button("+ Dodaj fakturę", "invoice") : "")}
     ${monthNavigator("invoice", activeMonth, monthlyInvoices, "faktur")}
-    <section class="metric-grid">
+    <section class="metric-grid invoice-metric-grid">
       ${invoiceAmountMetric("Faktury", filteredInvoices, `${filteredInvoices.length} · ${invoiceTypeFilterLabel(activeType)}`, "yellow")}
       ${invoiceAmountMetric("Zakupowe", visibleInvoices.filter((row) => row.invoice_type === "purchase"), "Koszty z FV", "red")}
       ${invoiceAmountMetric("Sprzedażowe", visibleInvoices.filter((row) => row.invoice_type === "sales"), "Przychody z FV", "green")}
       ${invoiceAmountMetric("Do przypisania", unassigned, `${unassigned.length} pozycji`, "yellow")}
+      ${invoiceAmountMetric("Faktury korygujące", corrections, `${corrections.length} nie do rozliczenia`, "blue")}
     </section>
     <section class="ksef-import-card"><div class="ksef-import-intro"><div class="callout-icon">⇩</div><div><p class="eyebrow">${escapeHtml(ksefLabel)}</p><h2>Import faktur</h2><p>Wybierz rodzaj dokumentów za <strong>${escapeHtml(activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc")}</strong>. Duplikaty po numerze KSeF i środowisku zostaną pominięte.</p>${productionNotice}</div></div>${canAdd ? `<div class="ksef-import-actions"><div class="ksef-import-actions-head"><span>ŚRODOWISKO I ZAKRES</span>${environmentSwitch}<button class="text-button" type="button" data-action="test-ksef">Test połączenia</button></div><div class="ksef-import-action-grid"><button class="ksef-import-button ksef-import-sales" type="button" data-action="import-ksef-sales"><span>FV sprzedażowe</span><small>Przychody z kontraktów</small></button><button class="ksef-import-button ksef-import-purchase" type="button" data-action="import-ksef-purchase"><span>FV zakupowe</span><small>Koszty i zakupy firmy</small></button><button class="ksef-import-button ksef-import-all" type="button" data-action="import-ksef-month"><span>Wszystkie FV</span><small>Zakupowe i sprzedażowe</small></button></div></div>` : ""}</section>
     ${invoiceTypeTabs(visibleInvoices, activeType)}
     ${canAdd ? `<section class="panel import-runs"><div class="panel-head"><div><h2>Ostatnie importy KSeF</h2><p>Historia bezpiecznych zleceń importu; dane dostępowe nie są widoczne w aplikacji.</p></div></div>${recentRuns.length ? `<div class="table-wrap"><table><thead><tr><th>Uruchomiono</th><th>Środowisko</th><th>Status</th><th>Pobrano</th><th>Pomijane</th><th>Informacja</th></tr></thead><tbody>${recentRuns.map(importRunRow).join("")}</tbody></table></div>` : emptyState("Nie uruchomiono jeszcze importu KSeF.")}</section>` : ""}
-    ${renderInvoiceInbox(unassigned, canAdd)}
+    ${renderInvoiceInbox(unassigned, canAdd, corrections.length)}
+    ${renderInvoiceCorrections(corrections)}
     ${renderInvoiceRules(canAdd)}
     <section class="panel">
       <div class="panel-head"><div><h2>${escapeHtml(invoiceTypeFilterTitle(activeType))} — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Rozlicz fakturę jednorazowo albo podziel jej kwotę pomiędzy kontrakty i koszty firmowe.</p></div></div>
@@ -575,8 +578,16 @@ function invoiceTypeEmptyMessage(type) {
   return ({ all: "Brak faktur w wybranym miesiącu.", purchase: "Brak FV zakupowych w wybranym miesiącu.", sales: "Brak FV sprzedażowych w wybranym miesiącu." })[type] || "Brak faktur w wybranym miesiącu.";
 }
 
-function renderInvoiceInbox(rows, canManage) {
-  return `<section class="panel inbox-panel"><div class="panel-head"><div><h2>Do rozliczenia</h2><p>Faktury bez pełnego przypisania. Możesz rozdzielić jedną fakturę na kilka kontraktów lub kategorii firmowych.</p></div>${rows.length ? `<span class="tag tag-yellow">${rows.length} ${rows.length === 1 ? "faktura" : "faktur"}</span>` : `<span class="tag tag-green">Pusto</span>`}</div>${rows.length ? `<div class="table-wrap"><table class="inbox-table"><thead><tr><th>Faktura</th><th>Kontrahent</th><th>Netto FV</th><th>Pozostało</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${money(invoiceUnallocatedAmount(row))}</td><td class="row-actions">${canManage ? `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : emptyState("Wszystkie faktury z wybranego miesiąca są rozliczone.")}</section>`;
+function renderInvoiceInbox(rows, canManage, correctionCount = 0) {
+  const emptyText = correctionCount
+    ? "Brak dodatnich faktur do rozliczenia. Faktury korygujące znajdują się w osobnej sekcji poniżej."
+    : "Wszystkie faktury z wybranego miesiąca są rozliczone.";
+  return `<section class="panel inbox-panel"><div class="panel-head"><div><h2>Do rozliczenia</h2><p>Faktury bez pełnego przypisania. Możesz rozdzielić jedną fakturę na kilka kontraktów lub kategorii firmowych.</p></div>${rows.length ? `<span class="tag tag-yellow">${rows.length} ${rows.length === 1 ? "faktura" : "faktur"}</span>` : `<span class="tag tag-green">Pusto</span>`}</div>${rows.length ? `<div class="table-wrap"><table class="inbox-table"><thead><tr><th>Faktura</th><th>Kontrahent</th><th>Netto FV</th><th>Pozostało</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${money(invoiceUnallocatedAmount(row))}</td><td class="row-actions">${canManage ? `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : emptyState(emptyText)}</section>`;
+}
+
+function renderInvoiceCorrections(rows) {
+  if (!rows.length) return "";
+  return `<section class="panel invoice-corrections-panel"><div class="panel-head"><div><h2>Faktury korygujące</h2><p>Dokumenty z ujemną kwotą netto. Są widoczne w rejestrze, ale nie wymagają rozliczenia na kontrakt ani koszt firmowy.</p></div><span class="tag tag-blue">${rows.length} ${rows.length === 1 ? "korekta" : "korekty"}</span></div><div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(invoiceRow).join("")}</tbody></table></div></section>`;
 }
 
 function renderInvoiceRules(canManage) {
@@ -865,7 +876,8 @@ function invoiceRow(row) {
     ? `<button class="table-action" type="button" data-action="invoice-attachments" data-id="${row.id}">Skan / OCR${attachments ? ` (${attachments})` : ""}</button>`
     : "";
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
-  const controls = canManageFinance() ? `${preview}${attachmentControl}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
+  const allocate = invoiceIsCorrection(row) ? "" : `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>`;
+  const controls = canManageFinance() ? `${preview}${attachmentControl}${allocate}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function renderKsefPreview(activeMonth) {
@@ -936,6 +948,10 @@ function invoiceUnallocatedAmount(row) {
 
 function invoiceNeedsResolution(row) {
   return invoiceUnallocatedAmount(row) > 0;
+}
+
+function invoiceIsCorrection(row) {
+  return Number(row?.net_amount_cents || 0) < 0;
 }
 
 function allocationTargetLabel(row) {
