@@ -837,8 +837,11 @@ function invoiceRow(row) {
   const preview = row.source === "ksef" && row.ksef_number && canManageFinance()
     ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
     : "";
+  const attachmentControl = row.source !== "ksef"
+    ? `<button class="table-action" type="button" data-action="invoice-attachments" data-id="${row.id}">Skan / OCR${attachments ? ` (${attachments})` : ""}</button>`
+    : "";
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
-  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="invoice-attachments" data-id="${row.id}">Załączniki${attachments ? ` (${attachments})` : ""}</button><button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
+  const controls = canManageFinance() ? `${preview}${attachmentControl}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${row.source === "ksef" ? "KSeF DEMO" : "Ręczna"}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function renderKsefPreview(activeMonth) {
@@ -870,7 +873,10 @@ function detailInvoiceRow(row) {
     : "";
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
   const attachments = invoiceAttachmentCount(row.id);
-  const controls = canManageFinance() ? `${preview}<button class="table-action" type="button" data-action="invoice-attachments" data-id="${row.id}">Załączniki${attachments ? ` (${attachments})` : ""}</button><button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
+  const attachmentControl = row.source !== "ksef"
+    ? `<button class="table-action" type="button" data-action="invoice-attachments" data-id="${row.id}">Skan / OCR${attachments ? ` (${attachments})` : ""}</button>`
+    : "";
+  const controls = canManageFinance() ? `${preview}${attachmentControl}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
   const retention = row.invoice_type === "sales" ? retentionAmount(row.net_amount_cents, state.contractDetail?.retention_percent) : 0;
   return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}${row.allocation_portion ? " · część FV" : ""}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${row.invoice_type === "sales" ? money(retention) : "—"}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
@@ -1080,6 +1086,7 @@ function formDefinition(mode, record) {
       ], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.company_category || "")))),
       field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
       field("Data opłacenia / zaksięgowania", input("paid_at", "date", record.paid_at)),
+      !record.id ? field("Skan FV / paragonu z NIP do OCR (opcjonalnie)", `<input name="scan_file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" /><small class="field-hint">Dla dokumentu ręcznego. Skan zostanie zapisany prywatnie i oznaczony jako oczekujący na OCR.</small>`, "full") : "",
     ].join("")
   };
   if (mode === "invoice-rule") return {
@@ -1162,6 +1169,7 @@ entryForm.addEventListener("submit", async (event) => {
   const mode = state.modalMode;
   const record = state.modalRecord;
   const submit = entryForm.querySelector("button[type=submit]");
+  let postSaveNotice = "";
   formError.hidden = true;
   try {
     submit.disabled = true;
@@ -1172,15 +1180,34 @@ entryForm.addEventListener("submit", async (event) => {
     else if (mode === "manage-user") await updateUser(form, record);
     else {
       const { table, payload } = formPayload(mode, form);
-      const query = record?.id
-        ? supabase.from(table).update(payload).eq("id", record.id)
-        : supabase.from(table).insert({ ...payload, created_by: state.user.id });
-      const { error } = await query;
-      if (error) throw error;
+      if (mode === "invoice" && !record?.id) {
+        const { data: savedInvoice, error } = await supabase
+          .from("invoices")
+          .insert({ ...payload, created_by: state.user.id })
+          .select("id, source")
+          .single();
+        if (error) throw error;
+        const scan = form.get("scan_file");
+        if (savedInvoice.source === "manual" && scan instanceof File && scan.size) {
+          try {
+            await uploadInvoiceAttachmentFile(savedInvoice.id, scan, "Skan do OCR", "queued");
+            postSaveNotice = "Faktura i skan zostały zapisane. Skan przekazano do kolejki OCR.";
+          } catch (uploadError) {
+            postSaveNotice = `Faktura została zapisana, ale nie udało się dodać skanu: ${uploadError.message || "nieznany błąd"}`;
+          }
+        }
+      } else {
+        const query = record?.id
+          ? supabase.from(table).update(payload).eq("id", record.id)
+          : supabase.from(table).insert({ ...payload, created_by: state.user.id });
+        const { error } = await query;
+        if (error) throw error;
+      }
     }
     modal.close();
     state.modalRecord = null;
     await loadView(supabase);
+    if (postSaveNotice) window.alert(postSaveNotice);
   } catch (error) {
     formError.textContent = error.message || "Nie udało się zapisać pozycji.";
     formError.hidden = false;
@@ -1636,9 +1663,10 @@ function openInvoiceAttachmentsModal(invoiceId) {
   if (!invoiceAttachmentsModal || !invoiceAttachmentsContent) throw new Error("Nie można otworzyć załączników faktury.");
   const invoice = state.invoices.find((row) => row.id === invoiceId);
   if (!invoice) throw new Error("Nie znaleziono faktury.");
+  if (invoice.source === "ksef") throw new Error("Skan i OCR są przeznaczone dla dokumentów dodawanych ręcznie. Faktura z KSeF ma podgląd pobierany bezpośrednio z KSeF.");
   state.pendingInvoiceAttachmentId = invoiceId;
   const files = (state.invoiceAttachments || []).filter((row) => row.invoice_id === invoiceId);
-  invoiceAttachmentsContent.innerHTML = `<div class="invoice-attachments-heading"><div><p class="eyebrow">DOKUMENTY DO FAKTURY</p><h3>${escapeHtml(invoice.document_number)}</h3><p>${escapeHtml(invoice.counterparty || "Brak kontrahenta")}</p></div>${canManageFinance() ? `<button class="button button-primary" type="button" data-invoice-attachment-action="upload">+ Dodaj plik</button>` : ""}</div><div class="invoice-attachments-ocr-note"><strong>OCR</strong><span>Pliki są gotowe do odczytu. Kolejka OCR jest zapisywana w PrądPlan; automatyczne odczytywanie wymaga późniejszego podłączenia dostawcy OCR.</span></div>${files.length ? `<div class="invoice-attachment-list">${files.map(invoiceAttachmentRow).join("")}</div>` : emptyState("Nie dodano jeszcze załączników do tej faktury.")}`;
+  invoiceAttachmentsContent.innerHTML = `<div class="invoice-attachments-heading"><div><p class="eyebrow">SKAN DOKUMENTU / OCR</p><h3>${escapeHtml(invoice.document_number)}</h3><p>${escapeHtml(invoice.counterparty || "Brak kontrahenta")}</p></div>${canManageFinance() ? `<button class="button button-primary" type="button" data-invoice-attachment-action="upload">+ Dodaj skan</button>` : ""}</div><div class="invoice-attachments-ocr-note"><strong>OCR</strong><span>Dodaj skan ręcznie wystawionej FV albo paragonu z NIP. Kolejka OCR jest zapisywana w PrądPlan; automatyczne odczytywanie wymaga późniejszego podłączenia dostawcy OCR.</span></div>${files.length ? `<div class="invoice-attachment-list">${files.map(invoiceAttachmentRow).join("")}</div>` : emptyState("Nie dodano jeszcze skanu do tej faktury.")}`;
   if (!invoiceAttachmentsModal.open) invoiceAttachmentsModal.showModal();
 }
 
@@ -1660,6 +1688,10 @@ async function saveInvoiceAttachment(form) {
   const invoiceId = state.pendingInvoiceAttachmentId;
   if (!invoiceId) throw new Error("Najpierw wybierz fakturę.");
   const file = form.get("file");
+  return uploadInvoiceAttachmentFile(invoiceId, file, String(form.get("label") || "").trim(), "not_requested");
+}
+
+async function uploadInvoiceAttachmentFile(invoiceId, file, label = "", ocrStatus = "not_requested") {
   if (!(file instanceof File) || !file.size) throw new Error("Wybierz plik do wysłania.");
   if (file.size > 15728640) throw new Error("Plik jest większy niż dozwolone 15 MB.");
   const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
@@ -1675,7 +1707,8 @@ async function saveInvoiceAttachment(form) {
     storage_path: storagePath,
     mime_type: file.type,
     size_bytes: file.size,
-    label: String(form.get("label") || "").trim(),
+    label,
+    ocr_status: ocrStatus,
     uploaded_by: state.user.id,
   });
   if (recordError) {

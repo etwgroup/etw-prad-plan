@@ -350,6 +350,7 @@ textarea { min-height: 85px; resize: vertical; }
 .invoice-attachment-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 0; border-top: 1px solid #ececea; }
 .invoice-attachment-row strong, .invoice-attachment-row small { display: block; }
 .invoice-attachment-row small { margin-top: 4px; color: var(--ink-soft); font-size: 12px; }
+.field-hint { display: block; margin-top: 7px; color: var(--ink-soft); font-size: 12px; font-weight: 500; line-height: 1.45; }
 
 /* Ekran logowania musi przykrywać całą przestrzeń widoku, niezależnie od
    domyślnych marginesów lub reguł dodanych przez hosting/przeglądarkę. */
