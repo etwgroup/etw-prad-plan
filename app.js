@@ -549,7 +549,7 @@ function renderInvoices() {
     ${renderInvoiceRules(canAdd)}
     <section class="panel">
       <div class="panel-head"><div><h2>${escapeHtml(invoiceTypeFilterTitle(activeType))} — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Rozlicz fakturę jednorazowo albo podziel jej kwotę pomiędzy kontrakty i koszty firmowe.</p></div></div>
-      ${filteredInvoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${filteredInvoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState(invoiceTypeEmptyMessage(activeType))}
+      ${filteredInvoices.length ? `<div class="table-wrap invoice-table-wrap"><table class="invoice-register-table"><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Netto</th><th>Kwota VAT</th><th>Brutto</th><th>Status</th><th></th></tr></thead><tbody>${filteredInvoices.map(invoiceRow).join("")}</tbody></table></div>` : emptyState(invoiceTypeEmptyMessage(activeType))}
     </section>`;
 }
 
@@ -582,12 +582,12 @@ function renderInvoiceInbox(rows, canManage, correctionCount = 0) {
   const emptyText = correctionCount
     ? "Brak dodatnich faktur do rozliczenia. Faktury korygujące znajdują się w osobnej sekcji poniżej."
     : "Wszystkie faktury z wybranego miesiąca są rozliczone.";
-  return `<section class="panel inbox-panel"><div class="panel-head"><div><h2>Do rozliczenia</h2><p>Faktury bez pełnego przypisania. Możesz rozdzielić jedną fakturę na kilka kontraktów lub kategorii firmowych.</p></div>${rows.length ? `<span class="tag tag-yellow">${rows.length} ${rows.length === 1 ? "faktura" : "faktur"}</span>` : `<span class="tag tag-green">Pusto</span>`}</div>${rows.length ? `<div class="table-wrap"><table class="inbox-table"><thead><tr><th>Faktura</th><th>Kontrahent</th><th>Netto FV</th><th>Pozostało</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td>${escapeHtml(row.counterparty || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${money(invoiceUnallocatedAmount(row))}</td><td class="row-actions">${canManage ? `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : emptyState(emptyText)}</section>`;
+  return `<section class="panel inbox-panel"><div class="panel-head"><div><h2>Do rozliczenia</h2><p>Faktury bez pełnego przypisania. Możesz rozdzielić jedną fakturę na kilka kontraktów lub kategorii firmowych.</p></div>${rows.length ? `<span class="tag tag-yellow">${rows.length} ${rows.length === 1 ? "faktura" : "faktur"}</span>` : `<span class="tag tag-green">Pusto</span>`}</div>${rows.length ? `<div class="table-wrap invoice-table-wrap"><table class="inbox-table"><thead><tr><th>Faktura</th><th>Kontrahent</th><th>Netto FV</th><th>Kwota VAT</th><th>Brutto FV</th><th>Pozostało netto</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="Faktura"><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td data-label="Kontrahent">${escapeHtml(row.counterparty || "—")}</td><td data-label="Netto FV" class="money">${money(row.net_amount_cents)}</td><td data-label="Kwota VAT" class="money">${money(vatAmountCents(row))}</td><td data-label="Brutto FV" class="money">${money(grossAmountCents(row))}</td><td data-label="Pozostało netto" class="money">${money(invoiceUnallocatedAmount(row))}</td><td data-label="Akcje" class="row-actions">${canManage ? `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : emptyState(emptyText)}</section>`;
 }
 
 function renderInvoiceCorrections(rows) {
   if (!rows.length) return "";
-  return `<section class="panel invoice-corrections-panel"><div class="panel-head"><div><h2>Faktury korygujące</h2><p>Dokumenty z ujemną kwotą netto. Są widoczne w rejestrze, ale nie wymagają rozliczenia na kontrakt ani koszt firmowy.</p></div><span class="tag tag-blue">${rows.length} ${rows.length === 1 ? "korekta" : "korekty"}</span></div><div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Kwota netto</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(invoiceRow).join("")}</tbody></table></div></section>`;
+  return `<section class="panel invoice-corrections-panel"><div class="panel-head"><div><h2>Faktury korygujące</h2><p>Dokumenty z ujemną kwotą netto. Są widoczne w rejestrze, ale nie wymagają rozliczenia na kontrakt ani koszt firmowy.</p></div><span class="tag tag-blue">${rows.length} ${rows.length === 1 ? "korekta" : "korekty"}</span></div><div class="table-wrap invoice-table-wrap"><table class="invoice-register-table"><thead><tr><th>Numer</th><th>Kontrahent</th><th>Data wystawienia</th><th>Termin płatności</th><th>Typ</th><th>Przypisanie</th><th>Netto</th><th>Kwota VAT</th><th>Brutto</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(invoiceRow).join("")}</tbody></table></div></section>`;
 }
 
 function renderInvoiceRules(canManage) {
@@ -796,6 +796,10 @@ function grossAmountCents(row) {
   return Math.round(net * (1 + rate / 100));
 }
 
+function vatAmountCents(row) {
+  return grossAmountCents(row) - Number(row?.net_amount_cents || 0);
+}
+
 function cashflowItems(invoices, costs) {
   const invoiceItems = (invoices || []).map((row) => ({
     id: row.id,
@@ -878,7 +882,7 @@ function invoiceRow(row) {
   const remove = isOwner() ? `<button class="table-action danger" type="button" data-action="delete-invoice" data-id="${row.id}">Usuń</button>` : "";
   const allocate = invoiceIsCorrection(row) ? "" : `<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button>`;
   const controls = canManageFinance() ? `${preview}${attachmentControl}${allocate}<button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
-  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${date(row.issue_date)}</td><td>${date(row.due_date)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td>${escapeHtml(assignment || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  return `<tr><td data-label="Faktura"><strong>${escapeHtml(row.document_number)}</strong><small>${escapeHtml(invoiceSourceLabel(row))}</small></td><td data-label="Kontrahent">${escapeHtml(row.counterparty)}</td><td data-label="Data wystawienia">${date(row.issue_date)}</td><td data-label="Termin płatności">${date(row.due_date)}</td><td data-label="Typ">${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td data-label="Przypisanie">${escapeHtml(assignment || "—")}</td><td data-label="Netto" class="money">${money(row.net_amount_cents)}</td><td data-label="Kwota VAT" class="money">${money(vatAmountCents(row))}</td><td data-label="Brutto" class="money">${money(grossAmountCents(row))}</td><td data-label="Status">${statusTag(row.payment_status)}</td><td data-label="Akcje" class="row-actions">${controls}</td></tr>`;
 }
 function renderKsefPreview(activeMonth) {
   if (state.ksefPreviewMonth !== activeMonth) return "";
