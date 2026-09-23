@@ -249,19 +249,20 @@ async function queryAllInvoiceMetadata(
   filters: Parameters<KSeFClient["invoices"]["queryInvoiceMetadata"]>[0],
 ) {
   const invoices: KsefInvoice[] = [];
-  let offset = 0;
 
   // KSeF zwraca metadane stronicowane po 100 rekordów. Bez tej pętli
   // dokumenty od 101. pozycji mogły nie trafić do importu miesiąca.
+  // Uwaga: drugi parametr biblioteki to numer strony, a nie przesunięcie
+  // wyrażone liczbą dokumentów. Po stronie KSeF poprawna sekwencja to
+  // 0, 1, 2…; przekazanie 100 dla drugiej strony kończy się błędem 400.
   for (let pageIndex = 0; pageIndex < MAX_METADATA_PAGES; pageIndex += 1) {
-    const page = await client.invoices.queryInvoiceMetadata(filters, offset, PAGE_SIZE, "Desc");
+    const page = await client.invoices.queryInvoiceMetadata(filters, pageIndex, PAGE_SIZE, "Desc");
     const pageInvoices = (page.invoices || []) as KsefInvoice[];
     invoices.push(...pageInvoices);
     if (!page.hasMore) return invoices;
     if (!pageInvoices.length) {
       throw new Error("KSeF zgłosił kolejną stronę metadanych, ale nie zwrócił żadnej faktury.");
     }
-    offset += pageInvoices.length;
   }
 
   throw new Error(`KSeF zwrócił więcej niż ${MAX_METADATA_PAGES * PAGE_SIZE} faktur jednego rodzaju w miesiącu. Zawęź okres importu.`);
