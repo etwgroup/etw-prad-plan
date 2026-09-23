@@ -533,10 +533,10 @@ function renderInvoices() {
     ${heading("KSeF / REJESTR FAKTUR", "Faktury", "Faktury zakupowe i sprzedażowe. Każdą pozycję można przypisać do kontraktu lub kosztów firmy.", canAdd ? button("+ Dodaj fakturę", "invoice") : "")}
     ${monthNavigator("invoice", activeMonth, monthlyInvoices, "faktur")}
     <section class="metric-grid">
-      ${metric("Faktury", String(filteredInvoices.length), `${invoiceTypeFilterLabel(activeType)} · ${activeMonth ? monthLabel(activeMonth) : "brak danych"}`, "yellow")}
-      ${metric("Zakupowe", money(sum(visibleInvoices.filter((row) => row.invoice_type === "purchase"), "net_amount_cents")), "Koszty z FV", "red")}
-      ${metric("Sprzedażowe", money(sum(visibleInvoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "green")}
-      ${metric("Do przypisania", money(sum(unassigned, "net_amount_cents")), `${unassigned.length} pozycji`, "yellow")}
+      ${invoiceAmountMetric("Faktury", filteredInvoices, `${filteredInvoices.length} · ${invoiceTypeFilterLabel(activeType)}`, "yellow")}
+      ${invoiceAmountMetric("Zakupowe", visibleInvoices.filter((row) => row.invoice_type === "purchase"), "Koszty z FV", "red")}
+      ${invoiceAmountMetric("Sprzedażowe", visibleInvoices.filter((row) => row.invoice_type === "sales"), "Przychody z FV", "green")}
+      ${invoiceAmountMetric("Do przypisania", unassigned, `${unassigned.length} pozycji`, "yellow")}
     </section>
     <section class="ksef-import-card"><div class="ksef-import-intro"><div class="callout-icon">⇩</div><div><p class="eyebrow">${escapeHtml(ksefLabel)}</p><h2>Import faktur</h2><p>Wybierz rodzaj dokumentów za <strong>${escapeHtml(activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc")}</strong>. Duplikaty po numerze KSeF i środowisku zostaną pominięte.</p>${productionNotice}</div></div>${canAdd ? `<div class="ksef-import-actions"><div class="ksef-import-actions-head"><span>ŚRODOWISKO I ZAKRES</span>${environmentSwitch}<button class="text-button" type="button" data-action="test-ksef">Test połączenia</button></div><div class="ksef-import-action-grid"><button class="ksef-import-button ksef-import-sales" type="button" data-action="import-ksef-sales"><span>FV sprzedażowe</span><small>Przychody z kontraktów</small></button><button class="ksef-import-button ksef-import-purchase" type="button" data-action="import-ksef-purchase"><span>FV zakupowe</span><small>Koszty i zakupy firmy</small></button><button class="ksef-import-button ksef-import-all" type="button" data-action="import-ksef-month"><span>Wszystkie FV</span><small>Zakupowe i sprzedażowe</small></button></div></div>` : ""}</section>
     ${invoiceTypeTabs(visibleInvoices, activeType)}
@@ -736,6 +736,11 @@ function heading(eyebrow, title, description, actions = "") {
 
 function button(label, mode) { return `<button class="button button-primary" type="button" data-add="${mode}">${label}</button>`; }
 function metric(label, value, tagText, tone) { return `<article class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div><span class="tag tag-${tone}">${tagText}</span></article>`; }
+function invoiceAmountMetric(label, rows, tagText, tone) {
+  const netCents = sum(rows, "net_amount_cents");
+  const grossCents = rows.reduce((total, row) => total + grossAmountCents(row), 0);
+  return `<article class="metric invoice-amount-metric"><div class="metric-label">${label}</div><div class="invoice-metric-amounts"><div><span>Netto</span><strong>${moneyExact(netCents)}</strong></div><div><span>Brutto</span><strong>${moneyExact(grossCents)}</strong></div></div><span class="tag tag-${tone}">${tagText}</span></article>`;
+}
 function emptyState(text) { return `<div class="empty">${text}</div>`; }
 function costCategoryCard(category, rows) {
   const matching = rows.filter((row) => normalizeCostCategory(row.category) === category);
@@ -2225,6 +2230,7 @@ function monthLabel(key) {
   return new Intl.DateTimeFormat("pl-PL", { month: "long", year: "numeric" }).format(new Date(Date.UTC(year, month - 1, 1)));
 }
 function money(cents) { return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(cents || 0) / 100); }
+function moneyExact(cents) { return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(cents || 0) / 100); }
 function moneyKsef(amount, currency = "PLN") {
   const value = Number(amount || 0);
   const code = /^[A-Z]{3}$/.test(String(currency)) ? String(currency) : "PLN";
