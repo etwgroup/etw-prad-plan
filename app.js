@@ -828,7 +828,9 @@ function invoiceAmountMetric(label, rows, tagText, tone) {
 function emptyState(text) { return `<div class="empty">${text}</div>`; }
 function costCategoryCard(category, rows) {
   const matching = rows.filter((row) => normalizeCostCategory(row.category) === category);
-  return `<article class="cost-category-card"><p>${escapeHtml(costCategoryLabel(category))}</p><strong>${money(sum(matching, "net_amount_cents"))}</strong><small>${matching.length} ${matching.length === 1 ? "pozycja" : "pozycje"}</small></article>`;
+  const netCents = sum(matching, "net_amount_cents");
+  const grossCents = matching.reduce((total, row) => total + grossAmountCents(row), 0);
+  return `<article class="cost-category-card"><p>${escapeHtml(costCategoryLabel(category))}</p><div class="cost-category-amounts"><div><span>Netto</span><strong>${moneyExact(netCents)}</strong></div><div><span>Brutto</span><strong>${moneyExact(grossCents)}</strong></div></div><small>${matching.length} ${matching.length === 1 ? "pozycja" : "pozycje"}</small></article>`;
 }
 
 function renderContractBudget(contract, editable) {

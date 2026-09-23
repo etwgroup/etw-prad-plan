@@ -133,7 +133,10 @@ html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
 .cost-breakdown { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: -12px 0 30px; }
 .cost-category-card { min-width: 0; padding: 18px 19px; border: 1px solid var(--line); border-top: 4px solid var(--yellow); background: var(--white); }
 .cost-category-card p { margin: 0; color: var(--ink-soft); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-.cost-category-card strong { display: block; margin: 12px 0 5px; font-size: 20px; letter-spacing: -.04em; white-space: nowrap; }
+.cost-category-amounts { display: grid; gap: 7px; margin: 12px 0 7px; }
+.cost-category-amounts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.cost-category-amounts span { color: var(--ink-soft); font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.cost-category-amounts strong { min-width: 0; font-size: clamp(12px, 1.3vw, 18px); letter-spacing: -.045em; text-align: right; white-space: nowrap; }
 .cost-category-card small { color: var(--ink-soft); font-size: 12px; }
 .monthly-panel { margin-bottom: 30px; }
 .month-navigator { display: grid; grid-template-columns: 58px minmax(0, 1fr) 58px; align-items: center; max-width: 560px; margin: -8px 0 30px; border: 1px solid var(--line); background: var(--white); text-align: center; }
