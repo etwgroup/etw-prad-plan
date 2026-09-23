@@ -385,7 +385,7 @@ async function loadSettlementData(supabase) {
 async function loadInvoiceData(supabase) {
   const [contracts, invoices, invoiceAllocations, invoiceRules, invoiceAttachments] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, retention_percent", "name", true),
-    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, ksef_environment, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status, contracts(name)", "issue_date", false),
+    selectRows(supabase, "invoices", "id, invoice_type, source, document_number, ksef_number, ksef_environment, ksef_details_synced_at, counterparty, counterparty_nip, ksef_item_summary, issue_date, due_date, paid_at, net_amount_cents, vat_rate, allocation, contract_id, company_category, contract_budget_category, payment_status, contracts(name)", "issue_date", false),
     selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, budget_category, net_amount_cents", "created_at", false),
     canManageFinance() ? selectRows(supabase, "invoice_assignment_rules", "id, name, active, priority, invoice_type, match_nip, match_text, target_type, contract_id, company_category, contracts(name)", "priority", true) : Promise.resolve([]),
     selectRows(supabase, "invoice_attachments", "id, invoice_id, file_name, storage_path, mime_type, size_bytes, label, ocr_status, created_at", "created_at", false),
@@ -551,9 +551,11 @@ function renderInvoices() {
   const filteredInvoices = activeType === "all" ? visibleInvoices : visibleInvoices.filter((row) => row.invoice_type === activeType);
   const unassigned = filteredInvoices.filter(invoiceNeedsResolution);
   const corrections = filteredInvoices.filter(invoiceIsCorrection);
+  const ksefMonthInvoices = visibleInvoices.filter((row) => row.source === "ksef" && row.ksef_environment === ksefEnvironment);
   return `
     ${heading("KSeF / REJESTR FAKTUR", "Faktury", "Faktury zakupowe i sprzedażowe. Każdą pozycję można przypisać do kontraktu lub kosztów firmy.", canAdd ? button("+ Dodaj fakturę", "invoice") : "")}
     ${monthNavigator("invoice", activeMonth, monthlyInvoices, "faktur")}
+    ${renderKsefMonthImportStatus(ksefMonthInvoices, ksefEnvironment, activeMonth)}
     <section class="metric-grid invoice-metric-grid">
       ${invoiceAmountMetric("Faktury", filteredInvoices, `${filteredInvoices.length} · ${invoiceTypeFilterLabel(activeType)}`, "yellow")}
       ${invoiceAmountMetric("Zakupowe", visibleInvoices.filter((row) => row.invoice_type === "purchase"), "Koszty z FV", "red")}
@@ -595,6 +597,17 @@ function invoiceTypeFilterTitle(type) {
 
 function invoiceTypeEmptyMessage(type) {
   return ({ all: "Brak faktur w wybranym miesiącu.", purchase: "Brak FV zakupowych w wybranym miesiącu.", sales: "Brak FV sprzedażowych w wybranym miesiącu." })[type] || "Brak faktur w wybranym miesiącu.";
+}
+
+function renderKsefMonthImportStatus(rows, environment, activeMonth) {
+  const complete = rows.filter((row) => Boolean(row.ksef_details_synced_at)).length;
+  const retry = rows.length - complete;
+  const environmentLabel = ksefEnvironmentLabel(environment);
+  const month = activeMonth ? monthLabel(activeMonth) : "wybrany miesiąc";
+  if (!rows.length) {
+    return `<section class="ksef-month-status is-empty"><div><p class="eyebrow">STATUS IMPORTU KSEF</p><h2>${escapeHtml(environmentLabel)} · ${escapeHtml(month)}</h2><p>W tym miesiącu nie ma jeszcze faktur zaimportowanych z wybranego środowiska.</p></div><span class="tag tag-yellow">Brak importu</span></section>`;
+  }
+  return `<section class="ksef-month-status"><div class="ksef-month-status-heading"><p class="eyebrow">STATUS IMPORTU KSEF</p><h2>${escapeHtml(environmentLabel)} · ${escapeHtml(month)}</h2><p>Pełny import obejmuje zapis faktury oraz odczyt XML: pozycji i terminu płatności.</p></div><div class="ksef-month-status-counts"><div class="ksef-month-status-count is-complete"><span>W całości zaimportowane</span><strong>${complete}</strong><small>XML, pozycje i termin gotowe</small></div><div class="ksef-month-status-count is-retry"><span>Wymaga ponownego importu</span><strong>${retry}</strong><small>${retry ? "System spróbuje ponownie przy kolejnym imporcie" : "Nie ma brakujących danych XML"}</small></div><div class="ksef-month-status-count"><span>Łącznie z KSeF</span><strong>${rows.length}</strong><small>FV w rejestrze za ten miesiąc</small></div></div></section>`;
 }
 
 function renderInvoiceInbox(rows, canManage, correctionCount = 0) {
@@ -2046,7 +2059,7 @@ async function importSelectedKsefPreview() {
       ksefNumbers: data?.pendingKsefNumbers,
     });
     state.ksefSelectedNumbers.clear();
-    window.alert(importKsefCompletionMessage(data?.imported || 0, details, ksefNumbers.length));
+    window.alert(importKsefCompletionMessage(data?.imported || 0, details, ksefNumbers.length, data));
     await loadView(state.supabase);
   } finally {
     setImportProgress("", false);
@@ -2130,7 +2143,7 @@ async function synchronizeKsefImportDetails(accessToken, { month, invoiceType, e
   };
 }
 
-function importKsefCompletionMessage(imported, details, fallbackCount = 0) {
+function importKsefCompletionMessage(imported, details, fallbackCount = 0, importStatus = null) {
   const importedCount = Number(imported || 0);
   const knownCount = importedCount || Number(fallbackCount || 0);
   const importedMessage = importedCount
@@ -2148,7 +2161,16 @@ function importKsefCompletionMessage(imported, details, fallbackCount = 0) {
   const retryMessage = details?.failedNumbers?.length
     ? ` KSeF nie udostępnił XML dla ${details.failedNumbers.length} faktur po dwóch próbach; faktury są już w rejestrze, a szczegóły zostaną ponowione przy kolejnym imporcie.`
     : "";
-  return `${importedMessage}${detailsMessage}${dueDateMessage}${rulesMessage}${retryMessage}`;
+  const totalKsefInvoices = Number(importStatus?.ksefMonthTotal || 0);
+  const alreadyComplete = Number(importStatus?.ksefDetailsComplete || 0);
+  const fullyImported = totalKsefInvoices
+    ? Math.min(totalKsefInvoices, alreadyComplete + Number(details?.synchronized || 0))
+    : 0;
+  const needsRetry = totalKsefInvoices ? Math.max(0, totalKsefInvoices - fullyImported) : Number(details?.failedNumbers?.length || 0);
+  const importStatusMessage = totalKsefInvoices
+    ? ` Status importu KSeF: ${fullyImported} w całości zaimportowanych, ${needsRetry} wymaga ponownego odczytu XML.`
+    : "";
+  return `${importedMessage}${detailsMessage}${dueDateMessage}${rulesMessage}${importStatusMessage}${retryMessage}`;
 }
 
 function ksefSyncPause(milliseconds) {
@@ -2176,7 +2198,7 @@ async function importKsefMonth(month, invoiceType = "all") {
       environment: state.ksefEnvironment,
       ksefNumbers: data?.pendingKsefNumbers,
     });
-    window.alert(importKsefCompletionMessage(data?.imported || 0, details));
+    window.alert(importKsefCompletionMessage(data?.imported || 0, details, 0, data));
     await loadView(state.supabase);
   } finally {
     setImportProgress("", false);

@@ -231,6 +231,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
       detailsSynced: 0,
       detailsPending,
       pendingKsefNumbers,
+      ksefMonthTotal: foundNumbers.length,
+      ksefDetailsComplete: foundNumbers.length - detailsPending,
       message: `Zaimportowano ${toInsert.length} (${invoiceTypeLabel(invoiceType)}) do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${detailsMessage}`,
     });
   } catch (error) {
