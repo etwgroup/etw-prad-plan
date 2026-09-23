@@ -153,7 +153,7 @@ html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
 .empty { padding: 48px 27px; color: var(--ink-soft); text-align: center; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 700px; }
-.invoice-table-wrap { overflow-x: clip; }
+.invoice-table-wrap { overflow: visible; container-type: inline-size; }
 .invoice-register-table, .inbox-table { min-width: 0; table-layout: fixed; }
 .invoice-register-table th, .invoice-register-table td { padding-left: 12px; padding-right: 12px; }
 .invoice-register-table td, .inbox-table td { overflow-wrap: anywhere; }
@@ -407,20 +407,33 @@ html body #app .auth-screen {
   .invoice-metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-@media (max-width: 1500px) {
-  .invoice-table-wrap { overflow: visible; }
-  .invoice-register-table, .invoice-register-table tbody, .inbox-table, .inbox-table tbody { display: block; width: 100%; min-width: 0; }
-  .invoice-register-table thead, .inbox-table thead { display: none; }
-  .invoice-register-table tr, .inbox-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; margin: 0; padding: 14px 18px; border-top: 1px solid #ececea; }
-  .invoice-register-table td, .inbox-table td { display: flex; align-items: baseline; justify-content: space-between; min-width: 0; padding: 9px 0; border: 0; font-size: 13px; gap: 12px; text-align: right; }
-  .invoice-register-table td::before, .inbox-table td::before { flex: 0 1 44%; color: var(--ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-align: left; text-transform: uppercase; content: attr(data-label); }
-  .invoice-register-table td:first-child, .inbox-table td:first-child { grid-column: 1 / -1; align-items: flex-start; flex-direction: column; text-align: left; }
-  .invoice-register-table td:first-child::before, .inbox-table td:first-child::before, .invoice-register-table td.row-actions::before, .inbox-table td.row-actions::before { display: none; }
-  .invoice-register-table td.row-actions, .inbox-table td.row-actions { grid-column: 1 / -1; align-items: center; justify-content: flex-start; padding-top: 12px; }
+@container (min-width: 761px) and (max-width: 1500px) {
+  .invoice-register-table, .invoice-register-table thead, .invoice-register-table tbody, .inbox-table, .inbox-table thead, .inbox-table tbody { display: block; width: 100%; min-width: 0; }
+  .invoice-register-table tr { display: grid; grid-template-columns: minmax(86px, 1.35fr) minmax(70px, 1.2fr) minmax(55px, .75fr) minmax(55px, .75fr) minmax(55px, .65fr) minmax(75px, 1fr) minmax(62px, .85fr) minmax(62px, .85fr) minmax(62px, .85fr) minmax(68px, .8fr); }
+  .inbox-table tr { display: grid; grid-template-columns: minmax(90px, 1.5fr) minmax(100px, 1.5fr) repeat(4, minmax(70px, 1fr)); }
+  .invoice-register-table thead tr, .inbox-table thead tr { padding: 0 10px; border-bottom: 1px solid #ececea; }
+  .invoice-register-table tbody tr, .inbox-table tbody tr { margin: 0; padding: 12px 10px 0; border-top: 1px solid #ececea; }
+  .invoice-register-table tbody tr:first-child, .inbox-table tbody tr:first-child { border-top: 0; }
+  .invoice-register-table th, .inbox-table th { min-width: 0; padding: 11px 4px; overflow: hidden; background: transparent; color: #65696b; font-size: clamp(8px, .62vw, 10px); line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
+  .invoice-register-table td, .inbox-table td { display: block; min-width: 0; padding: 8px 4px; overflow: hidden; border: 0; font-size: clamp(9px, .78vw, 12px); line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+  .invoice-register-table td::before, .inbox-table td::before { display: none; }
+  .invoice-register-table td small, .inbox-table td small { display: none; }
+  .invoice-register-table td.row-actions, .inbox-table td.row-actions { display: flex; grid-column: 1 / -1; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px; padding: 10px 4px 14px; overflow: visible; white-space: normal; }
+  .invoice-register-table th:last-child, .inbox-table th:last-child { display: none; }
+  .invoice-register-table .tag { padding: 4px 5px; font-size: clamp(8px, .58vw, 10px); white-space: nowrap; }
 }
 
-@media (max-width: 700px) {
+@container (max-width: 760px) {
+  .invoice-register-table, .invoice-register-table tbody, .inbox-table, .inbox-table tbody { display: block; width: 100%; min-width: 0; }
+  .invoice-register-table thead, .inbox-table thead { display: none; }
   .invoice-register-table tr, .inbox-table tr { grid-template-columns: 1fr; gap: 0; padding-left: 14px; padding-right: 14px; }
+  .invoice-register-table tr, .inbox-table tr { display: grid; margin: 0; padding-top: 14px; padding-bottom: 14px; border-top: 1px solid #ececea; }
+  .invoice-register-table td, .inbox-table td { display: flex; align-items: baseline; justify-content: space-between; min-width: 0; padding: 9px 0; border: 0; font-size: 13px; gap: 12px; text-align: right; white-space: normal; overflow: visible; }
+  .invoice-register-table td::before, .inbox-table td::before { display: block; flex: 0 1 44%; color: var(--ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-align: left; text-transform: uppercase; content: attr(data-label); }
+  .invoice-register-table td:first-child, .inbox-table td:first-child { grid-column: 1 / -1; align-items: flex-start; flex-direction: column; text-align: left; }
+  .invoice-register-table td small, .inbox-table td small { display: block; }
+  .invoice-register-table td:first-child::before, .inbox-table td:first-child::before, .invoice-register-table td.row-actions::before, .inbox-table td.row-actions::before { display: none; }
+  .invoice-register-table td.row-actions, .inbox-table td.row-actions { grid-column: 1 / -1; align-items: center; justify-content: flex-start; padding-top: 12px; }
 }
 
 @container (max-width: 180px) {
