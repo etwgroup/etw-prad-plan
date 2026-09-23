@@ -340,6 +340,9 @@ function matchingRule(invoice: KsefInvoice, type: "sales" | "purchase", itemSumm
   const searchable = normalizeMatchText([counterparty, invoice.invoiceNumber, itemSummary].join(" "));
   return rules.find((rule) => {
     if (!rule.active || (rule.invoice_type && rule.invoice_type !== type)) return false;
+    // FV sprzedażowe są przychodem kontraktowym — nigdy nie kierujemy ich
+    // automatycznie do kategorii kosztów firmowych.
+    if (type === "sales" && rule.target_type !== "contract") return false;
     const nipMatches = !rule.match_nip || normalizeNip(rule.match_nip) === nip;
     const text = normalizeMatchText(rule.match_text || "");
     const textMatches = !text || searchable.includes(text);

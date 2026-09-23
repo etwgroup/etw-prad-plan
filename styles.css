@@ -292,6 +292,7 @@ textarea { min-height: 85px; resize: vertical; }
 .invoice-allocation-modal { width: min(940px, calc(100% - 28px)); }
 .invoice-allocation-rows { display: grid; gap: 12px; margin: 20px 0 14px; }
 .invoice-allocation-row { display: grid; grid-template-columns: minmax(115px, .65fr) minmax(170px, 1fr) minmax(145px, .9fr) minmax(160px, 1fr) minmax(110px, .65fr) 42px; gap: 10px; align-items: end; padding: 14px; border: 1px solid var(--line); background: #fcfcfa; }
+.invoice-allocation-row.is-sales-invoice { grid-template-columns: minmax(115px, .7fr) minmax(190px, 1.5fr) minmax(110px, .65fr) 42px; }
 .invoice-allocation-row label { display: grid; gap: 6px; color: var(--ink-soft); font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .invoice-allocation-row label.is-disabled { color: #aaa; }
 .invoice-allocation-row select:disabled { cursor: not-allowed; border-color: #e3e3e0; color: #aaa; background: #f3f3f1; }

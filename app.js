@@ -1181,6 +1181,9 @@ function formDefinition(mode, record) {
   const moneyValue = (cents) => Number(cents || 0) / 100;
   const moneyInput = (name = "net_amount", value = "") => input(name, "number", value, "min=\"0\" step=\"0.01\" required");
   const statusOptions = (selected = "do_platnosci") => options([["nowa", "Nowa"], ["do_platnosci", "Do płatności"], ["oplacona", "Opłacona"], ["zaksiegowana", "Zaksięgowana"]], selected);
+  const invoiceAllocationOptions = record.invoice_type === "sales"
+    ? [["unassigned", "Do przypisania"], ["contract", "Kontrakt"]]
+    : [["unassigned", "Do przypisania"], ["contract", "Kontrakt"], ["company", "Koszt firmowy"]];
 
   if (mode === "contract") return {
     eyebrow: record.id ? "EDYCJA KONTRAKTU" : "NOWY KONTRAKT", title: record.id ? "Edytuj kontrakt" : "Dodaj kontrakt", fields: [
@@ -1219,7 +1222,7 @@ function formDefinition(mode, record) {
       field("Termin płatności", input("due_date", "date", record.due_date)),
       field("Kwota netto (zł)", moneyInput("net_amount", record.id ? moneyValue(record.net_amount_cents) : "")),
       field("VAT (%)", input("vat_rate", "number", record.vat_rate ?? 23, "min=\"0\" max=\"100\" step=\"0.01\" required")),
-      field("Przypisanie", select("allocation", options([["unassigned", "Do przypisania"], ["contract", "Kontrakt"], ["company", "Koszt firmowy"]], record.allocation || (state.activeView === "contractDetail" ? "contract" : "unassigned")))),
+      field(record.invoice_type === "sales" ? "Przypisanie (FV sprzedażowa → kontrakt)" : "Przypisanie", select("allocation", options(invoiceAllocationOptions, record.allocation || (state.activeView === "contractDetail" ? "contract" : "unassigned")))),
       field("Kontrakt (gdy przypisanie: kontrakt)", select("contract_id", contractSelect)),
       field("Kategoria budżetu (gdy kontrakt)", select("contract_budget_category", options([["materialy", "Materiały"], ["robocizna", "Robocizna"], ["podwykonawcy", "Podwykonawcy"], ["sprzet", "Sprzęt"], ["pozostale", "Pozostałe"]], normalizeContractBudgetCategory(record.contract_budget_category || "pozostale")))),
       field("Kategoria firmowa (gdy koszt firmowy)", select("company_category", options([[
@@ -1471,15 +1474,19 @@ function openInvoiceAllocationModal(invoiceId) {
   state.pendingInvoiceAllocationId = invoiceId;
   if (invoiceAllocationError) invoiceAllocationError.hidden = true;
   if (invoiceAllocationTitle) invoiceAllocationTitle.textContent = `Rozlicz: ${invoice.document_number}`;
-  invoiceAllocationSummary.innerHTML = `<div class="allocation-summary"><strong>${escapeHtml(invoice.counterparty || "Brak kontrahenta")} · ${escapeHtml(invoice.document_number)}</strong><span>Wartość netto faktury: <strong>${money(invoice.net_amount_cents)}</strong>. Podziel kwotę pomiędzy kontrakty lub kategorię kosztu firmowego.</span></div>`;
+  const salesInvoice = invoice.invoice_type === "sales";
+  const allocationHint = salesInvoice
+    ? "FV sprzedażową można przypisać wyłącznie do kontraktu."
+    : "Podziel kwotę pomiędzy kontrakty lub kategorię kosztu firmowego.";
+  invoiceAllocationSummary.innerHTML = `<div class="allocation-summary"><strong>${escapeHtml(invoice.counterparty || "Brak kontrahenta")} · ${escapeHtml(invoice.document_number)}</strong><span>Wartość netto faktury: <strong>${money(invoice.net_amount_cents)}</strong>. ${allocationHint}</span></div>`;
 
   const existingAllocations = invoiceAllocationsFor(invoiceId);
   const initialRows = existingAllocations.length
-    ? existingAllocations.map((row) => ({ targetType: row.target_type, contractId: row.contract_id || "", category: row.company_category || "", budgetCategory: row.budget_category || "pozostale", amountCents: Number(row.net_amount_cents || 0) }))
+    ? existingAllocations.map((row) => ({ targetType: salesInvoice ? "contract" : row.target_type, contractId: row.contract_id || "", category: salesInvoice ? "" : row.company_category || "", budgetCategory: row.budget_category || "pozostale", amountCents: Number(row.net_amount_cents || 0) }))
     : [{
-      targetType: invoice.allocation === "company" ? "company" : "contract",
+      targetType: salesInvoice ? "contract" : invoice.allocation === "company" ? "company" : "contract",
       contractId: invoice.allocation === "contract" ? invoice.contract_id || "" : state.contractDetail?.id || "",
-      category: invoice.allocation === "company" ? invoice.company_category || "pozostale" : "",
+      category: !salesInvoice && invoice.allocation === "company" ? invoice.company_category || "pozostale" : "",
       budgetCategory: invoice.allocation === "contract" ? invoice.contract_budget_category || "pozostale" : "pozostale",
       amountCents: Number(invoice.net_amount_cents || 0),
     }];
@@ -1510,14 +1517,28 @@ function invoiceAllocationBudgetCategoryOptions(selected = "pozostale") {
 
 function renderInvoiceAllocationRows(rows) {
   if (!invoiceAllocationRows) return;
-  invoiceAllocationRows.innerHTML = rows.map((row, index) => `<div class="invoice-allocation-row" data-allocation-row>
-    <label>Cel<select name="target_type"><option value="contract" ${row.targetType === "contract" ? "selected" : ""}>Kontrakt</option><option value="company" ${row.targetType === "company" ? "selected" : ""}>Koszt firmowy</option></select></label>
-    <label class="${row.targetType !== "contract" ? "is-disabled" : ""}">Kontrakt<select name="contract_id" ${row.targetType !== "contract" ? "disabled" : ""}>${invoiceAllocationContractOptions(row.targetType === "contract" ? row.contractId : "")}</select></label>
-    <label class="${row.targetType !== "contract" ? "is-disabled" : ""}">Budżet kontraktu<select name="budget_category" ${row.targetType !== "contract" ? "disabled" : ""}>${invoiceAllocationBudgetCategoryOptions(row.targetType === "contract" ? row.budgetCategory : "pozostale")}</select></label>
-    <label class="${row.targetType !== "company" ? "is-disabled" : ""}">Kategoria firmowa<select name="company_category" ${row.targetType !== "company" ? "disabled" : ""}>${invoiceAllocationCategoryOptions(row.targetType === "company" ? row.category : "")}</select></label>
-    <label>Netto (zł)<input name="amount" type="number" min="0.01" step="0.01" value="${escapeHtml((Number(row.amountCents || 0) / 100).toFixed(2))}" /></label>
-    <button class="allocation-remove" type="button" data-allocation-remove="${index}" aria-label="Usuń część">×</button>
-  </div>`).join("");
+  const invoice = state.invoices.find((row) => row.id === state.pendingInvoiceAllocationId);
+  const salesInvoice = invoice?.invoice_type === "sales";
+  invoiceAllocationRows.innerHTML = rows.map((row, index) => {
+    const targetType = salesInvoice ? "contract" : row.targetType;
+    const targetField = salesInvoice
+      ? `<label>Cel<input name="target_type" type="hidden" value="contract" /><span class="readonly-field">Kontrakt</span></label>`
+      : `<label>Cel<select name="target_type"><option value="contract" ${targetType === "contract" ? "selected" : ""}>Kontrakt</option><option value="company" ${targetType === "company" ? "selected" : ""}>Koszt firmowy</option></select></label>`;
+    const budgetField = salesInvoice
+      ? `<input name="budget_category" type="hidden" value="pozostale" />`
+      : `<label class="${targetType !== "contract" ? "is-disabled" : ""}">Budżet kontraktu<select name="budget_category" ${targetType !== "contract" ? "disabled" : ""}>${invoiceAllocationBudgetCategoryOptions(targetType === "contract" ? row.budgetCategory : "pozostale")}</select></label>`;
+    const categoryField = salesInvoice
+      ? ""
+      : `<label class="${targetType !== "company" ? "is-disabled" : ""}">Kategoria firmowa<select name="company_category" ${targetType !== "company" ? "disabled" : ""}>${invoiceAllocationCategoryOptions(targetType === "company" ? row.category : "")}</select></label>`;
+    return `<div class="invoice-allocation-row ${salesInvoice ? "is-sales-invoice" : ""}" data-allocation-row>
+      ${targetField}
+      <label class="${targetType !== "contract" ? "is-disabled" : ""}">Kontrakt<select name="contract_id" ${targetType !== "contract" ? "disabled" : ""}>${invoiceAllocationContractOptions(targetType === "contract" ? row.contractId : "")}</select></label>
+      ${budgetField}
+      ${categoryField}
+      <label>Netto (zł)<input name="amount" type="number" min="0.01" step="0.01" value="${escapeHtml((Number(row.amountCents || 0) / 100).toFixed(2))}" /></label>
+      <button class="allocation-remove" type="button" data-allocation-remove="${index}" aria-label="Usuń część">×</button>
+    </div>`;
+  }).join("");
   updateInvoiceAllocationTotal();
 }
 
@@ -1552,6 +1573,7 @@ async function saveInvoiceAllocations() {
   if (!rows.length) throw new Error("Dodaj co najmniej jedną część rozliczenia.");
   for (const row of rows) {
     if (row.amountCents <= 0) throw new Error("Każda część rozliczenia musi mieć kwotę większą od zera.");
+    if (invoice.invoice_type === "sales" && row.targetType !== "contract") throw new Error("FV sprzedażową można przypisać wyłącznie do kontraktu.");
     if (row.targetType === "contract" && !row.contractId) throw new Error("Wybierz kontrakt dla każdej części rozliczenia typu „Kontrakt”.");
     if (row.targetType === "company" && !row.category) throw new Error("Wybierz kategorię dla każdej części rozliczenia typu „Koszt firmowy”.");
   }
@@ -1630,14 +1652,16 @@ function formPayload(mode, form) {
   }
   if (mode === "settlement") return { table: "settlements", payload: { contract_id: value("contract_id"), period: value("period"), settlement_date: value("settlement_date"), kind: "przerob", net_amount_cents: number("net_amount"), vat_rate: vat(), reference_number: value("reference_number"), budget_category: value("budget_category") || "pozostale" } };
   if (mode === "invoice") {
+    const invoiceType = value("invoice_type");
     const allocation = value("allocation");
     const contractId = value("contract_id");
     const category = value("company_category");
     const paymentStatus = value("payment_status");
     const paidAt = ["oplacona", "zaksiegowana"].includes(paymentStatus) ? (value("paid_at") || todayKey()) : null;
+    if (invoiceType === "sales" && allocation === "company") throw new Error("FV sprzedażową można przypisać wyłącznie do kontraktu.");
     if (allocation === "contract" && !contractId) throw new Error("Wybierz kontrakt dla tego przypisania.");
     if (allocation === "company" && !category) throw new Error("Podaj kategorię kosztu firmowego.");
-    return { table: "invoices", payload: { invoice_type: value("invoice_type"), source: value("source"), document_number: value("document_number"), counterparty: value("counterparty"), counterparty_nip: normalizeNip(value("counterparty_nip")) || null, issue_date: value("issue_date"), due_date: value("due_date") || null, paid_at: paidAt, net_amount_cents: number("net_amount"), vat_rate: vat(), allocation, contract_id: allocation === "contract" ? contractId : null, company_category: allocation === "company" ? category : null, contract_budget_category: allocation === "contract" ? normalizeContractBudgetCategory(value("contract_budget_category")) : null, payment_status: paymentStatus } };
+    return { table: "invoices", payload: { invoice_type: invoiceType, source: value("source"), document_number: value("document_number"), counterparty: value("counterparty"), counterparty_nip: normalizeNip(value("counterparty_nip")) || null, issue_date: value("issue_date"), due_date: value("due_date") || null, paid_at: paidAt, net_amount_cents: number("net_amount"), vat_rate: vat(), allocation, contract_id: allocation === "contract" ? contractId : null, company_category: allocation === "company" ? category : null, contract_budget_category: allocation === "contract" ? normalizeContractBudgetCategory(value("contract_budget_category")) : null, payment_status: paymentStatus } };
   }
   if (mode === "invoice-rule") {
     const targetType = value("target_type");
@@ -1648,6 +1672,7 @@ function formPayload(mode, form) {
     const priority = Number(value("priority"));
     if (!nip && !matchText) throw new Error("Podaj NIP kontrahenta albo tekst, którego ma szukać reguła.");
     if (!Number.isInteger(priority) || priority < 0 || priority > 9999) throw new Error("Priorytet musi być liczbą całkowitą od 0 do 9999.");
+    if (targetType === "company" && value("invoice_type") !== "purchase") throw new Error("Reguła przypisująca do kosztu firmowego może dotyczyć wyłącznie FV zakupowej.");
     if (targetType === "contract" && !contractId) throw new Error("Wybierz kontrakt będący celem reguły.");
     if (targetType === "company" && !category) throw new Error("Wybierz kategorię firmową będącą celem reguły.");
     return { table: "invoice_assignment_rules", payload: { name: value("name"), active: form.get("active") === "on", priority, invoice_type: value("invoice_type") || null, match_nip: nip || null, match_text: matchText || null, target_type: targetType, contract_id: targetType === "contract" ? contractId : null, company_category: targetType === "company" ? category : null } };
