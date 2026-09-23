@@ -25,6 +25,7 @@ const invoiceAllocationTotal = document.querySelector("#invoice-allocation-total
 const invoiceAllocationError = document.querySelector("#invoice-allocation-error");
 const invoiceAttachmentsModal = document.querySelector("#invoice-attachments-modal");
 const invoiceAttachmentsContent = document.querySelector("#invoice-attachments-content");
+const MAX_KSEF_DETAIL_BATCHES = 6;
 
 const viewMeta = {
   dashboard: { label: "Przegląd", icon: "▦" },
@@ -1895,19 +1896,24 @@ async function importSelectedKsefPreview() {
   if (!window.confirm(`Zaimportować ${ksefNumbers.length} zaznaczonych faktur z ${ksefEnvironmentLabel()} do rejestru PrądPlan? Zostaną dodane jako nieprzypisane.`)) return;
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
+  const data = await requestKsefImport(session.access_token, { month, ksefNumbers, environment: state.ksefEnvironment });
+  state.ksefSelectedNumbers.clear();
+  window.alert(data?.message || `Zaimportowano wybrane faktury z ${ksefEnvironmentLabel()}.`);
+  await loadView(state.supabase);
+}
+
+async function requestKsefImport(accessToken, payload) {
   const response = await fetch("/api/ksef-import", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
+      Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ month, ksefNumbers, environment: state.ksefEnvironment }),
+    body: JSON.stringify(payload),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się zaimportować wybranych faktur.");
-  state.ksefSelectedNumbers.clear();
-  window.alert(data?.message || `Zaimportowano wybrane faktury z ${ksefEnvironmentLabel()}.`);
-  await loadView(state.supabase);
+  if (!response.ok || data?.error) throw new Error(data?.error || `Nie udało się zaimportować faktur z ${ksefEnvironmentLabel()}.`);
+  return data;
 }
 
 async function importKsefMonth(month, invoiceType = "all") {
@@ -1920,19 +1926,32 @@ async function importKsefMonth(month, invoiceType = "all") {
 
   setImportProgress(`Trwa pobieranie i importowanie z ${ksefEnvironmentLabel()}: ${typeLabel}…`, true);
   try {
-    const response = await fetch("/api/ksef-import", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ month, invoiceType, environment: state.ksefEnvironment }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data?.error) throw new Error(data?.error || `Nie udało się zaimportować faktur z ${ksefEnvironmentLabel()}.`);
+    let totalImported = 0;
+    let totalDetailsSynced = 0;
+    let detailsPending = 0;
+    let lastMessage = "";
+    let batchesCompleted = 0;
+
+    for (let batch = 0; batch < MAX_KSEF_DETAIL_BATCHES; batch += 1) {
+      setImportProgress(batch
+        ? `Uzupełnianie terminów płatności i pozycji FV — pakiet ${batch + 1}…`
+        : `Trwa pobieranie i importowanie z ${ksefEnvironmentLabel()}: ${typeLabel}…`, true);
+      const data = await requestKsefImport(session.access_token, { month, invoiceType, environment: state.ksefEnvironment });
+      totalImported += Number(data?.imported || 0);
+      totalDetailsSynced += Number(data?.detailsSynced || 0);
+      detailsPending = Number(data?.detailsPending || 0);
+      lastMessage = data?.message || lastMessage;
+      batchesCompleted += 1;
+      // Zatrzymujemy pętlę, gdy wszystko jest gotowe lub KSeF nie pozwolił
+      // odczytać żadnej pozycji w danym pakiecie.
+      if (!detailsPending || !Number(data?.detailsSynced || 0)) break;
+    }
     state.ksefSelectedNumbers.clear();
     if (["sales", "purchase"].includes(invoiceType)) state.invoiceTypeFilter = invoiceType;
-    window.alert(data?.message || `Zaimportowano faktury z ${ksefEnvironmentLabel()}.`);
+    const batchMessage = batchesCompleted > 1
+      ? `Zaimportowano ${totalImported} faktur do rejestru PrądPlan. Uzupełniono dane XML, pozycje i terminy płatności dla ${totalDetailsSynced} faktur.${detailsPending ? ` Pozostało ${detailsPending} dokumentów do uzupełnienia — uruchom import ponownie.` : ""}`
+      : lastMessage || `Zaimportowano faktury z ${ksefEnvironmentLabel()}.`;
+    window.alert(batchMessage);
     await loadView(state.supabase);
   } finally {
     setImportProgress("", false);

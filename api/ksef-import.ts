@@ -35,6 +35,7 @@ type ExistingInvoice = {
   id: string;
   ksef_number: string | null;
   due_date: string | null;
+  ksef_details_synced_at: string | null;
 };
 
 type KsefEnvironment = "demo" | "production";
@@ -56,6 +57,10 @@ type AssignmentRule = {
 };
 
 const PAGE_SIZE = 100;
+// Jedno wywołanie Vercel uzupełnia ograniczoną partię XML. Dzięki temu duży
+// miesiąc nie blokuje zapisu metadanych ani nie wpada w limit 300 sekund.
+const XML_DETAILS_PER_BATCH = 48;
+const XML_WORKER_COUNT = 4;
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   response.setHeader("Cache-Control", "no-store");
@@ -140,7 +145,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const { data: existingRows, error: existingError } = await callerClient
       .from("invoices")
-      .select("id, ksef_number, due_date")
+      .select("id, ksef_number, due_date, ksef_details_synced_at")
       .in("ksef_number", foundNumbers)
       .eq("ksef_environment", environment);
     if (existingError) throw existingError;
@@ -151,17 +156,20 @@ export default async function handler(request: VercelRequest, response: VercelRe
         .map((row) => [row.ksef_number as string, row]),
     );
 
-    // Metadane KSeF nie zawierają terminu płatności. XML jest odczytywany
-    // tylko dla nowych faktur i dla wcześniejszych importów bez terminu.
+    // Metadane KSeF nie zawierają terminu płatności ani opisu pozycji. XML
+    // pobieramy w małych, równoległych partiach; reszta jest dokończona przez
+    // kolejne krótkie wywołanie z przeglądarki, bez ryzyka timeoutu Vercel.
+    const detailCandidates = [...current.values()].filter(({ invoice }) => {
+      const saved = existingByKsefNumber.get(invoice.ksefNumber);
+      return !saved || !saved.ksef_details_synced_at;
+    });
     const dueDateResult = await loadDueDates(
       client,
-      [...current.values()].filter(({ invoice }) => {
-        const saved = existingByKsefNumber.get(invoice.ksefNumber);
-        return !saved || !saved.due_date;
-      }),
+      detailCandidates.slice(0, XML_DETAILS_PER_BATCH),
     );
     const dueDates = dueDateResult.values;
     const itemSummaries = dueDateResult.itemSummaries;
+    const detailsSyncedAt = new Date().toISOString();
 
     const toInsert = [...current.values()]
       .filter(({ invoice }) => !existingByKsefNumber.has(invoice.ksefNumber))
@@ -173,6 +181,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
         itemSummaries.get(invoice.ksefNumber) || "",
         matchingRule(invoice, type, itemSummaries.get(invoice.ksefNumber) || "", assignmentRules),
         environment,
+        dueDateResult.synchronized.has(invoice.ksefNumber) ? detailsSyncedAt : null,
       ));
 
     if (toInsert.length) {
@@ -184,14 +193,18 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     let dueDatesUpdated = 0;
     for (const saved of existingByKsefNumber.values()) {
-      const dueDate = !saved.due_date && saved.ksef_number ? dueDates.get(saved.ksef_number) : null;
-      if (!dueDate) continue;
+      if (!saved.ksef_number || !dueDateResult.synchronized.has(saved.ksef_number)) continue;
+      const dueDate = !saved.due_date ? dueDates.get(saved.ksef_number) : null;
+      const itemSummary = itemSummaries.get(saved.ksef_number);
+      const updatePayload: Record<string, string> = { ksef_details_synced_at: detailsSyncedAt };
+      if (dueDate) updatePayload.due_date = dueDate;
+      if (itemSummary) updatePayload.ksef_item_summary = itemSummary;
       const { error: updateError } = await callerClient
         .from("invoices")
-        .update({ due_date: dueDate })
+        .update(updatePayload)
         .eq("id", saved.id);
       if (updateError) throw updateError;
-      dueDatesUpdated += 1;
+      if (dueDate) dueDatesUpdated += 1;
     }
 
     const skipped = existingByKsefNumber.size + missingCount;
@@ -203,11 +216,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const dueDateWarning = dueDateResult.failures
       ? ` Nie udało się odczytać terminu płatności dla ${dueDateResult.failures} faktur; spróbuj ponownie po sprawdzeniu logów Vercel.`
       : "";
+    const detailsPending = Math.max(0, detailCandidates.length - dueDateResult.synchronized.size);
+    const detailsMessage = detailCandidates.length
+      ? ` Odczytano dodatkowe dane XML dla ${dueDateResult.synchronized.size} z ${detailCandidates.length} faktur.${detailsPending ? ` Pozostało ${detailsPending} do krótkiego uzupełnienia.` : ""}`
+      : "";
     return response.status(200).json({
       imported: toInsert.length,
       skipped,
       dueDatesUpdated,
-      message: `Zaimportowano ${toInsert.length} (${invoiceTypeLabel(invoiceType)}) do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${dueDateMessage}${dueDateWarning}`,
+      detailsSynced: dueDateResult.synchronized.size,
+      detailsPending,
+      message: `Zaimportowano ${toInsert.length} (${invoiceTypeLabel(invoiceType)}) do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${dueDateMessage}${detailsMessage}${dueDateWarning}`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -226,10 +245,11 @@ function invoicePayload(
   itemSummary: string,
   rule: AssignmentRule | null,
   environment: KsefEnvironment,
+  detailsSyncedAt: string | null,
 ) {
   const netAmount = numberToCents(invoice.netAmount, "kwotę netto");
   const vatAmount = numberToCents(invoice.vatAmount, "kwotę VAT");
-  const effectiveVatRate = netAmount > 0 ? Math.round((vatAmount / netAmount) * 10000) / 100 : 0;
+  const effectiveVatRate = netAmount !== 0 ? Math.round((vatAmount / netAmount) * 10000) / 100 : 0;
   if (effectiveVatRate < 0 || effectiveVatRate > 100) throw new Error("Nieprawidłowa stawka VAT zwrócona przez KSeF.");
   const counterparty = type === "sales"
     ? invoice.buyer.name || invoice.buyer.identifier.value || "Brak danych kontrahenta"
@@ -245,6 +265,7 @@ function invoicePayload(
     counterparty,
     counterparty_nip: counterpartyNip,
     ksef_item_summary: itemSummary,
+    ksef_details_synced_at: detailsSyncedAt,
     issue_date: invoice.issueDate.slice(0, 10),
     due_date: dueDate,
     net_amount_cents: netAmount,
@@ -261,10 +282,11 @@ function invoicePayload(
 async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
   const values = new Map<string, string>();
   const itemSummaries = new Map<string, string>();
+  const synchronized = new Set<string>();
   let failures = 0;
-  // Pobieranie dokumentów pojedynczo ogranicza ryzyko odrzucenia serii przez
-  // KSeF i nie blokuje importu, jeśli jedna faktura jest niedostępna.
-  const workerCount = Math.min(1, invoices.length);
+  // Cztery równoległe pobrania są wystarczająco ostrożne dla KSeF, a skracają
+  // odczyt XML wielokrotnie względem pojedynczej kolejki.
+  const workerCount = Math.min(XML_WORKER_COUNT, invoices.length);
   let nextIndex = 0;
 
   async function worker() {
@@ -276,6 +298,7 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
         if (dueDate) values.set(item.invoice.ksefNumber, dueDate);
         const itemSummary = invoiceItemSummaryFromXml(xml);
         if (itemSummary) itemSummaries.set(item.invoice.ksefNumber, itemSummary);
+        synchronized.add(item.invoice.ksefNumber);
       } catch (error) {
         failures += 1;
         const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -285,7 +308,7 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
   }
 
   await Promise.all(Array.from({ length: workerCount }, worker));
-  return { values, itemSummaries, failures };
+  return { values, itemSummaries, synchronized, failures };
 }
 
 function matchingRule(invoice: KsefInvoice, type: "sales" | "purchase", itemSummary: string, rules: AssignmentRule[]) {
