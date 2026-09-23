@@ -2472,7 +2472,7 @@ function shiftMonth(key, direction) {
   return date.toISOString().slice(0, 7);
 }
 function normalizeNip(value) { return String(value || "").replace(/\D/g, ""); }
-function companyCostCategories() { return [["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["badania_pracownicze", "Badania pracownicze"], ["leasingi", "Leasingi"], ["szkolenia", "Szkolenia"], ["pozostale", "Pozostałe"]]; }
+function companyCostCategories() { return [["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["badania_pracownicze", "Badania pracownicze"], ["leasingi", "Leasingi"], ["szkolenia", "Szkolenia"], ["reklama", "Reklama"], ["pozostale", "Pozostałe"]]; }
 function normalizeCostCategory(category) { return ({ najem: "najem_lokali", administracja: "pozostale", inne: "pozostale" })[category] || category || "pozostale"; }
 function costCategoryLabel(category) { return Object.fromEntries(companyCostCategories())[normalizeCostCategory(category)] || "Pozostałe"; }
 function retentionAmount(cents, percent) { return Math.round(Number(cents || 0) * (Number(percent || 0) / 100)); }
