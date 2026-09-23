@@ -25,7 +25,9 @@ const invoiceAllocationTotal = document.querySelector("#invoice-allocation-total
 const invoiceAllocationError = document.querySelector("#invoice-allocation-error");
 const invoiceAttachmentsModal = document.querySelector("#invoice-attachments-modal");
 const invoiceAttachmentsContent = document.querySelector("#invoice-attachments-content");
-const MAX_KSEF_DETAIL_BATCHES = 6;
+// Maks. 8 krótkich pakietów po 28 XML-i. Wystarcza dla 200 dokumentów
+// (100 zakupowych i 100 sprzedażowych) bez długiego pojedynczego wywołania.
+const MAX_KSEF_DETAIL_BATCHES = 8;
 
 const viewMeta = {
   dashboard: { label: "Przegląd", icon: "▦" },

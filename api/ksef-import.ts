@@ -59,8 +59,17 @@ type AssignmentRule = {
 const PAGE_SIZE = 100;
 // Jedno wywołanie Vercel uzupełnia ograniczoną partię XML. Dzięki temu duży
 // miesiąc nie blokuje zapisu metadanych ani nie wpada w limit 300 sekund.
-const XML_DETAILS_PER_BATCH = 48;
+// 28 dokumentów przy 4 workerach oznacza maksymalnie 7 odczytów na workera.
+const XML_DETAILS_PER_BATCH = 28;
 const XML_WORKER_COUNT = 4;
+const XML_DOWNLOAD_TIMEOUT_MS = 25_000;
+
+class KsefXmlTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KsefXmlTimeoutError";
+  }
+}
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   response.setHeader("Cache-Control", "no-store");
@@ -213,8 +222,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
       ? `; pominięto ${skipped} już zapisanych lub niedostępnych pozycji`
       : existingByKsefNumber.size ? `; pominięto ${existingByKsefNumber.size} już zapisanych pozycji` : "";
     const dueDateMessage = dueDatesUpdated ? ` Uzupełniono termin płatności w ${dueDatesUpdated} zapisanych pozycjach.` : "";
-    const dueDateWarning = dueDateResult.failures
-      ? ` Nie udało się odczytać terminu płatności dla ${dueDateResult.failures} faktur; spróbuj ponownie po sprawdzeniu logów Vercel.`
+    const failedDetails = Math.max(0, dueDateResult.failures - dueDateResult.timeouts);
+    const dueDateWarning = failedDetails
+      ? ` Nie udało się odczytać terminu płatności dla ${failedDetails} faktur; spróbuj ponownie po sprawdzeniu logów Vercel.`
+      : "";
+    const timeoutWarning = dueDateResult.timeouts
+      ? ` KSeF nie odpowiedział na czas dla ${dueDateResult.timeouts} faktur; ich szczegóły zostaną ponowione przy następnym imporcie.`
       : "";
     const detailsPending = Math.max(0, detailCandidates.length - dueDateResult.synchronized.size);
     const detailsMessage = detailCandidates.length
@@ -226,7 +239,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       dueDatesUpdated,
       detailsSynced: dueDateResult.synchronized.size,
       detailsPending,
-      message: `Zaimportowano ${toInsert.length} (${invoiceTypeLabel(invoiceType)}) do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${dueDateMessage}${detailsMessage}${dueDateWarning}`,
+      message: `Zaimportowano ${toInsert.length} (${invoiceTypeLabel(invoiceType)}) do rejestru PrądPlan${skippedMessage}.${automaticallyAssigned ? ` Automatycznie przypisano ${automaticallyAssigned} faktur według reguł.` : ""}${dueDateMessage}${detailsMessage}${dueDateWarning}${timeoutWarning}`,
     });
   } catch (error) {
     const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
@@ -284,6 +297,7 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
   const itemSummaries = new Map<string, string>();
   const synchronized = new Set<string>();
   let failures = 0;
+  let timeouts = 0;
   // Cztery równoległe pobrania są wystarczająco ostrożne dla KSeF, a skracają
   // odczyt XML wielokrotnie względem pojedynczej kolejki.
   const workerCount = Math.min(XML_WORKER_COUNT, invoices.length);
@@ -303,12 +317,19 @@ async function loadDueDates(client: KSeFClient, invoices: InvoiceToImport[]) {
         failures += 1;
         const diagnostic = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "UnknownError";
         console.warn("KSeF payment due date skipped", item.invoice.ksefNumber, diagnostic);
+        // Nie dokładamy kolejnych nieprzerwanych zapytań do tego samego
+        // workera. Pozostałe dokumenty zostaną dokończone przy kolejnym,
+        // krótkim wywołaniu importu.
+        if (error instanceof KsefXmlTimeoutError) {
+          timeouts += 1;
+          return;
+        }
       }
     }
   }
 
   await Promise.all(Array.from({ length: workerCount }, worker));
-  return { values, itemSummaries, synchronized, failures };
+  return { values, itemSummaries, synchronized, failures, timeouts };
 }
 
 function matchingRule(invoice: KsefInvoice, type: "sales" | "purchase", itemSummary: string, rules: AssignmentRule[]) {
@@ -348,8 +369,27 @@ async function downloadInvoiceXml(client: KSeFClient, ksefNumber: string) {
   if (typeof invoices.getInvoice !== "function") {
     throw new Error("Zainstalowana wersja klienta KSeF nie obsługuje pobierania XML faktury.");
   }
-  const result = await invoices.getInvoice(ksefNumber);
+  // KSeF potrafi sporadycznie nie zwrócić XML-a. Bez lokalnego limitu jedna
+  // zawieszona faktura blokowała całą funkcję aż do twardego limitu Vercel
+  // (300 s), mimo że pozostałe dokumenty były gotowe do zapisu.
+  const result = await withTimeout(
+    invoices.getInvoice(ksefNumber),
+    XML_DOWNLOAD_TIMEOUT_MS,
+    `KSeF nie odpowiedział w ciągu ${Math.round(XML_DOWNLOAD_TIMEOUT_MS / 1000)} s podczas pobierania XML faktury ${ksefNumber}.`,
+  );
   return xmlTextFromResult(result);
+}
+
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new KsefXmlTimeoutError(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([task, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 function xmlTextFromResult(value: unknown, depth = 0): string {
