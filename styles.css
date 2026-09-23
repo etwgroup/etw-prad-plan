@@ -130,7 +130,7 @@ html:has(.auth-screen), body:has(.auth-screen) { overflow: hidden; }
 .tag-green { background: #e3f2e8; color: #286243; }
 .tag-red { background: #fae4e2; color: #a13535; }
 .tag-blue { background: #e2e9ff; color: #3a508e; }
-.cost-breakdown { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: -12px 0 30px; }
+.cost-breakdown { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: -12px 0 30px; }
 .cost-category-card { min-width: 0; padding: 18px 19px; border: 1px solid var(--line); border-top: 4px solid var(--yellow); background: var(--white); }
 .cost-category-card p { margin: 0; color: var(--ink-soft); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 .cost-category-amounts { display: grid; gap: 7px; margin: 12px 0 7px; }

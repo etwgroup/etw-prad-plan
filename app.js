@@ -626,7 +626,7 @@ function renderInvoiceRules(canManage) {
 
 function renderCosts() {
   const canAdd = canManageFinance();
-  const categories = ["paliwo", "narzedzia", "ubior_bhp", "najem_lokali", "pozostale"];
+  const categories = companyCostCategories().map(([value]) => value);
   const allCompanyCosts = companyCostEntries();
   const monthlyCosts = groupRowsByMonth(allCompanyCosts, "cost_date");
   const activeMonth = selectedMonthKey("costMonth", monthlyCosts);
@@ -1226,9 +1226,7 @@ function formDefinition(mode, record) {
       field(record.invoice_type === "sales" ? "Przypisanie (FV sprzedażowa → kontrakt)" : "Przypisanie", select("allocation", options(invoiceAllocationOptions, record.allocation || (state.activeView === "contractDetail" ? "contract" : "unassigned")))),
       field("Kontrakt (gdy przypisanie: kontrakt)", select("contract_id", contractSelect)),
       field("Kategoria budżetu (gdy kontrakt)", select("contract_budget_category", options([["materialy", "Materiały"], ["robocizna", "Robocizna"], ["podwykonawcy", "Podwykonawcy"], ["sprzet", "Sprzęt"], ["pozostale", "Pozostałe"]], normalizeContractBudgetCategory(record.contract_budget_category || "pozostale")))),
-      field("Kategoria firmowa (gdy koszt firmowy)", select("company_category", options([[
-        "", "Wybierz kategorię"
-      ], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.company_category || "")))),
+      field("Kategoria firmowa (gdy koszt firmowy)", select("company_category", options([["", "Wybierz kategorię"], ...companyCostCategories()], normalizeCostCategory(record.company_category || "")))),
       field("Status płatności", select("payment_status", statusOptions(record.payment_status || "do_platnosci"))),
       field("Data opłacenia / zaksięgowania", input("paid_at", "date", record.paid_at)),
       !record.id ? field("Skan FV / paragonu z NIP do OCR (opcjonalnie)", `<input name="scan_file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" /><small class="field-hint">Dla dokumentu ręcznego. Skan zostanie zapisany prywatnie i oznaczony jako oczekujący na OCR.</small>`, "full") : "",
@@ -1243,14 +1241,14 @@ function formDefinition(mode, record) {
       field("Szukany tekst (opcjonalnie)", input("match_text", "text", record.match_text, "placeholder=\"np. rolki, ABC-123\"")),
       field("Cel przypisania", select("target_type", options([["contract", "Kontrakt"], ["company", "Koszt firmowy"]], record.target_type || "contract"))),
       field("Kontrakt (gdy cel: kontrakt)", select("contract_id", contractSelect)),
-      field("Kategoria firmowa (gdy cel: koszt firmowy)", select("company_category", options([["", "Wybierz kategorię"], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.company_category || "")))),
+      field("Kategoria firmowa (gdy cel: koszt firmowy)", select("company_category", options([["", "Wybierz kategorię"], ...companyCostCategories()], normalizeCostCategory(record.company_category || "")))),
       `<label class="check-field full"><input name="active" type="checkbox" ${record.id ? (record.active ? "checked" : "") : "checked"} />Reguła aktywna podczas kolejnych importów KSeF</label>`,
     ].join("")
   };
   if (mode === "cost") return {
     eyebrow: record.id ? "EDYCJA KOSZTU" : "KOSZTY FIRMOWE", title: record.id ? "Edytuj koszt firmowy" : "Dodaj koszt firmowy", fields: [
       field("Data kosztu", input("cost_date", "date", record.cost_date || today, "required")),
-      field("Kategoria", select("category", options([["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]], normalizeCostCategory(record.category || "paliwo")))),
+      field("Kategoria", select("category", options(companyCostCategories(), normalizeCostCategory(record.category || "paliwo")))),
       field("Opis", `<textarea name="description" placeholder="Np. najem biura — wrzesień">${escapeHtml(record.description || "")}</textarea>`, "full"),
       field("Dostawca", input("vendor", "text", record.vendor)),
       field("Numer dokumentu", input("document_number", "text", record.document_number)),
@@ -1507,7 +1505,7 @@ function invoiceAllocationContractOptions(selected = "") {
 }
 
 function invoiceAllocationCategoryOptions(selected = "") {
-  return [["", "Wybierz kategorię"], ["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["pozostale", "Pozostałe"]]
+  return [["", "Wybierz kategorię"], ...companyCostCategories()]
     .map(([value, label]) => `<option value="${value}" ${value === normalizeCostCategory(selected || "") ? "selected" : ""}>${label}</option>`).join("");
 }
 
@@ -2378,8 +2376,9 @@ function shiftMonth(key, direction) {
   return date.toISOString().slice(0, 7);
 }
 function normalizeNip(value) { return String(value || "").replace(/\D/g, ""); }
+function companyCostCategories() { return [["paliwo", "Paliwo"], ["narzedzia", "Narzędzia"], ["ubior_bhp", "Ubiór BHP"], ["najem_lokali", "Najem lokali"], ["badania_pracownicze", "Badania pracownicze"], ["leasingi", "Leasingi"], ["szkolenia", "Szkolenia"], ["pozostale", "Pozostałe"]]; }
 function normalizeCostCategory(category) { return ({ najem: "najem_lokali", administracja: "pozostale", inne: "pozostale" })[category] || category || "pozostale"; }
-function costCategoryLabel(category) { return ({ paliwo: "Paliwo", narzedzia: "Narzędzia", ubior_bhp: "Ubiór BHP", najem_lokali: "Najem lokali", pozostale: "Pozostałe" })[normalizeCostCategory(category)] || "Pozostałe"; }
+function costCategoryLabel(category) { return Object.fromEntries(companyCostCategories())[normalizeCostCategory(category)] || "Pozostałe"; }
 function retentionAmount(cents, percent) { return Math.round(Number(cents || 0) * (Number(percent || 0) / 100)); }
 function percentLabel(percent) { return `${new Intl.NumberFormat("pl-PL", { maximumFractionDigits: 2 }).format(Number(percent || 0))}%`; }
 function monthLabel(key) {
