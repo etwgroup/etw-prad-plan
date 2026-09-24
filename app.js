@@ -25,6 +25,8 @@ const invoiceAllocationTotal = document.querySelector("#invoice-allocation-total
 const invoiceAllocationError = document.querySelector("#invoice-allocation-error");
 const invoiceAttachmentsModal = document.querySelector("#invoice-attachments-modal");
 const invoiceAttachmentsContent = document.querySelector("#invoice-attachments-content");
+const vehicleInsuranceModal = document.querySelector("#vehicle-insurance-modal");
+const vehicleInsuranceContent = document.querySelector("#vehicle-insurance-content");
 // Metadane całego miesiąca zapisujemy od razu. XML-e (pozycje i terminy)
 // uzupełniamy automatycznie w małych pakietach, aby nie przekroczyć limitu
 // czasu Vercel nawet w miesiącach z dużą liczbą faktur.
@@ -38,6 +40,7 @@ const viewMeta = {
   invoices: { label: "Faktury", icon: "▧" },
   costs: { label: "Koszty firmowe", icon: "▱" },
   cashflow: { label: "Płatności i cash flow", icon: "↕" },
+  vehicles: { label: "Pojazdy", icon: "▰" },
   background: { label: "Działania w tle", icon: "↻" },
   obligations: { label: "Zobowiązania", icon: "▣" },
   alerts: { label: "Alerty i terminy", icon: "!" },
@@ -58,6 +61,8 @@ const state = {
   invoiceAttachments: [],
   budgetCategories: [],
   costs: [],
+  vehicles: [],
+  vehicleInsuranceDocuments: [],
   changes: [],
   documents: [],
   schedule: [],
@@ -84,6 +89,7 @@ const state = {
   pendingInvoiceDeleteId: null,
   pendingInvoiceAllocationId: null,
   pendingInvoiceAttachmentId: null,
+  pendingVehicleInsuranceId: null,
   supabase: null,
   shellEventsBound: false,
 };
@@ -216,6 +222,7 @@ function renderShell(supabase) {
           ${navButton("invoices")}
           ${navButton("costs")}
           ${navButton("cashflow")}
+          ${canManageFinance() ? navButton("vehicles") : ""}
           ${navButton("background")}
         </nav>
         <p class="nav-label">ANALIZY</p>
@@ -330,6 +337,11 @@ async function loadView(supabase, { preserveScroll = false } = {}) {
       await loadCashflowData(supabase);
       page.innerHTML = renderCashflow();
     }
+    if (state.activeView === "vehicles") {
+      if (!canManageFinance()) throw new Error("Brak uprawnień do rejestru pojazdów.");
+      await loadVehiclesData(supabase);
+      page.innerHTML = renderVehicles();
+    }
     if (state.activeView === "background") {
       page.innerHTML = renderBackgroundOperations();
     }
@@ -368,17 +380,19 @@ async function loadView(supabase, { preserveScroll = false } = {}) {
 }
 
 async function loadDashboardData(supabase) {
-  const [contracts, invoices, costs, invoiceAllocations] = await Promise.all([
+  const [contracts, invoices, costs, invoiceAllocations, vehicles] = await Promise.all([
     selectRows(supabase, "contracts", "id, name, client, trade, contract_number, value_cents, budget_cents, baseline_progress, due_date, status", "created_at", false),
     selectRows(supabase, "invoices", "id, invoice_type, net_amount_cents, allocation, contract_id, company_category", "issue_date", false),
     selectRows(supabase, "company_costs", "id, net_amount_cents", "cost_date", false),
     selectRows(supabase, "invoice_allocations", "id, invoice_id, target_type, contract_id, company_category, budget_category, net_amount_cents", "created_at", false),
+    canManageFinance() ? selectRows(supabase, "vehicles", "id, registration_number, brand_model, inspection_valid_to", "registration_number", true) : Promise.resolve([]),
   ]);
   state.contracts = contracts;
   state.settlements = [];
   state.invoices = invoices;
   state.invoiceAllocations = invoiceAllocations;
   state.costs = costs;
+  state.vehicles = vehicles;
 }
 
 async function loadCashflowData(supabase) {
@@ -423,6 +437,15 @@ async function loadCostsData(supabase) {
   state.costs = costs;
   state.invoices = invoices;
   state.invoiceAllocations = invoiceAllocations;
+}
+
+async function loadVehiclesData(supabase) {
+  const [vehicles, insuranceDocuments] = await Promise.all([
+    selectRows(supabase, "vehicles", "id, registration_number, brand_model, vin, inspection_valid_to, notes, created_at, updated_at", "registration_number", true),
+    selectRows(supabase, "vehicle_insurance_documents", "id, vehicle_id, file_name, storage_path, mime_type, size_bytes, label, valid_from, valid_to, created_at, updated_at", "valid_to", false),
+  ]);
+  state.vehicles = vehicles;
+  state.vehicleInsuranceDocuments = insuranceDocuments;
 }
 
 async function loadObligationsData(supabase) {
@@ -513,6 +536,7 @@ async function loadContractHistory(supabase, contractId) {
 function renderDashboard() {
   const contractValue = sum(state.contracts, "value_cents");
   const unassigned = state.invoices.filter(invoiceNeedsResolution);
+  const vehicleInspectionWarning = renderVehicleInspectionWarning();
   return `
     ${heading("PRĄDPLAN / PRZEGLĄD", "Portfel kontraktów", "Jedno miejsce do kontroli kontraktów, faktur i kosztów firmowych.")}
     <section class="metric-grid">
@@ -521,10 +545,22 @@ function renderDashboard() {
       ${metric("Faktury sprzedażowe", money(sum(state.invoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents")), "Przychody z FV", "blue")}
       ${metric("Nieprzypisane FV", String(unassigned.length), money(sum(unassigned, "net_amount_cents")), "red")}
     </section>
+    ${vehicleInspectionWarning}
     <section class="panel">
       <div class="panel-head"><div><h2>Stan portfela</h2><p>Najważniejsze kontrakty i stopień zaawansowania robót.</p></div><button class="button button-secondary" type="button" data-view="contracts">Zobacz kontrakty</button></div>
       ${state.contracts.length ? `<div class="table-wrap"><table><thead><tr><th>Kontrakt</th><th>Branża</th><th>Wartość netto</th><th>Zaawansowanie</th><th>Termin</th><th>Status</th></tr></thead><tbody>${state.contracts.slice(0, 6).map(contractRow).join("")}</tbody></table></div>` : emptyState("Brak kontraktów. Dodaj pierwszy kontrakt w zakładce „Portfel kontraktów”.")}
     </section>`;
+}
+
+function renderVehicleInspectionWarning() {
+  if (!canManageFinance()) return "";
+  const today = todayKey();
+  const oneMonthAhead = addMonths(today, 1);
+  const dueVehicles = (state.vehicles || [])
+    .filter((vehicle) => vehicle.inspection_valid_to && vehicle.inspection_valid_to <= oneMonthAhead)
+    .sort((left, right) => String(left.inspection_valid_to).localeCompare(String(right.inspection_valid_to)));
+  if (!dueVehicles.length) return "";
+  return `<section class="vehicle-inspection-warning" aria-label="Alerty przeglądów pojazdów"><div class="vehicle-inspection-warning-head"><div><p class="eyebrow">PILNY TERMIN</p><h2>Kończy się przegląd pojazdu</h2><p>Przegląd jest po terminie albo kończy się w ciągu najbliższego miesiąca.</p></div><button class="button button-danger" type="button" data-view="vehicles">Otwórz pojazdy</button></div><div class="vehicle-inspection-warning-list">${dueVehicles.map((vehicle) => `<article><div><strong>${escapeHtml(vehicle.brand_model || "Pojazd służbowy")}</strong><span>${escapeHtml(vehicle.registration_number)}</span></div><div><small>${vehicle.inspection_valid_to < today ? "Termin minął" : "Termin przeglądu"}</small><strong>${date(vehicle.inspection_valid_to)}</strong></div></article>`).join("")}</div></section>`;
 }
 
 function renderContracts() {
@@ -682,6 +718,57 @@ function renderCosts() {
       <div class="panel-head"><div><h2>Rejestr kosztów — ${escapeHtml(activeMonth ? monthLabel(activeMonth) : "brak miesiąca")}</h2><p>Pozycje nie są doliczane do budżetu pojedynczego kontraktu. FV rozliczone częściowo pokazują wyłącznie przypisaną kwotę netto.</p></div></div>
       ${visibleCosts.length ? `<div class="table-wrap invoice-table-wrap"><table class="cost-register-table"><thead><tr><th>Data</th><th>Kategoria</th><th>Opis</th><th>Dostawca</th><th>Dokument</th><th>Źródło</th><th>Netto</th><th>Kwota VAT</th><th>Brutto</th><th>Status</th><th></th></tr></thead><tbody>${visibleCosts.map(companyCostRow).join("")}</tbody></table></div>` : emptyState("Brak kosztów w wybranym miesiącu.")}
     </section>`;
+}
+
+function renderVehicles() {
+  const vehicles = state.vehicles || [];
+  const inspectionAttention = vehicles.filter((vehicle) => vehicleInspectionStatusMeta(vehicle).key !== "valid").length;
+  const insuranceAttention = vehicles.filter((vehicle) => vehicleInsuranceStatusMeta(vehicle).key !== "valid").length;
+  return `
+    ${heading("ETW GROUP / ADMINISTRACJA", "Pojazdy", "Rejestr pojazdów służbowych, terminów przeglądów oraz prywatnych dokumentów ubezpieczenia.", button("+ Dodaj pojazd", "vehicle"))}
+    <section class="metric-grid">
+      ${metric("Pojazdy służbowe", String(vehicles.length), "Rejestr firmowy", "blue")}
+      ${metric("Przeglądy wymagające uwagi", String(inspectionAttention), inspectionAttention ? "Termin do miesiąca / po terminie" : "Wszystkie aktualne", inspectionAttention ? "red" : "green")}
+      ${metric("Ubezpieczenia wymagające uwagi", String(insuranceAttention), insuranceAttention ? "Brak lub kończy się polisa" : "Wszystkie aktualne", insuranceAttention ? "yellow" : "green")}
+      ${metric("Dokumenty ubezpieczenia", String((state.vehicleInsuranceDocuments || []).length), "Prywatne załączniki", "blue")}
+    </section>
+    <section class="panel vehicles-panel">
+      <div class="panel-head"><div><h2>Rejestr pojazdów</h2><p>Polisę dodaj bezpośrednio przy pojeździe. Terminy są liczone według dat wpisanych w rejestrze.</p></div></div>
+      ${vehicles.length ? `<div class="vehicle-list">${vehicles.map(vehicleCard).join("")}</div>` : emptyState("Nie dodano jeszcze pojazdów służbowych.")}
+    </section>`;
+}
+
+function vehicleInsuranceDocumentsFor(vehicleId) {
+  return (state.vehicleInsuranceDocuments || []).filter((document) => document.vehicle_id === vehicleId);
+}
+
+function vehicleInspectionStatusMeta(vehicle) {
+  const deadline = vehicle.inspection_valid_to;
+  if (!deadline) return { key: "missing", label: "Brak terminu", className: "tag-yellow" };
+  if (deadline < todayKey()) return { key: "expired", label: "Po terminie", className: "tag-red" };
+  if (deadline <= addMonths(todayKey(), 1)) return { key: "soon", label: "Do miesiąca", className: "tag-red" };
+  return { key: "valid", label: "Aktualny", className: "tag-green" };
+}
+
+function vehicleInsuranceStatusMeta(vehicle) {
+  const documents = vehicleInsuranceDocumentsFor(vehicle.id);
+  const current = [...documents].sort((left, right) => String(right.valid_to || "").localeCompare(String(left.valid_to || "")))[0];
+  if (!current?.valid_to) return { key: "missing", label: "Brak polisy", className: "tag-yellow", document: current || null };
+  if (current.valid_to < todayKey()) return { key: "expired", label: "Polisa wygasła", className: "tag-red", document: current };
+  if (current.valid_to <= addMonths(todayKey(), 1)) return { key: "soon", label: "Polisa do miesiąca", className: "tag-yellow", document: current };
+  return { key: "valid", label: "Polisa aktualna", className: "tag-green", document: current };
+}
+
+function vehicleCard(vehicle) {
+  const inspection = vehicleInspectionStatusMeta(vehicle);
+  const insurance = vehicleInsuranceStatusMeta(vehicle);
+  const documents = vehicleInsuranceDocumentsFor(vehicle.id);
+  const insuranceDates = insurance.document ? `${insurance.document.valid_from ? `${date(insurance.document.valid_from)} – ` : ""}${date(insurance.document.valid_to)}` : "Dodaj polisę i jej okres obowiązywania";
+  return `<article class="vehicle-card">
+    <header class="vehicle-card-header"><div class="vehicle-card-title"><p class="eyebrow">POJAZD SŁUŻBOWY</p><h3>${escapeHtml(vehicle.brand_model || "Pojazd służbowy")}</h3><p><strong>${escapeHtml(vehicle.registration_number)}</strong>${vehicle.vin ? ` · VIN: ${escapeHtml(vehicle.vin)}` : ""}</p></div><div class="vehicle-card-actions"><button class="button button-secondary" type="button" data-action="vehicle-insurance-documents" data-id="${vehicle.id}">Polisy${documents.length ? ` (${documents.length})` : ""}</button><button class="table-action" type="button" data-action="edit-vehicle" data-id="${vehicle.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-vehicle" data-id="${vehicle.id}">Usuń</button></div></header>
+    <div class="vehicle-status-grid"><div><span>Przegląd techniczny</span><strong>${vehicle.inspection_valid_to ? date(vehicle.inspection_valid_to) : "Nie podano"}</strong><i class="tag ${inspection.className}">${inspection.label}</i></div><div><span>Ubezpieczenie</span><strong>${insuranceDates}</strong><i class="tag ${insurance.className}">${insurance.label}</i></div></div>
+    ${vehicle.notes ? `<p class="vehicle-notes">${escapeHtml(vehicle.notes)}</p>` : ""}
+  </article>`;
 }
 
 function companyCostEntries() {
@@ -1332,7 +1419,7 @@ function userRow(row) {
 
 function openEntryModal(mode, record = null) {
   if (["contract", "settlement", "change", "document", "schedule", "budget-category"].includes(mode) && !canManageContracts()) return;
-  if (["invoice", "cost", "invoice-rule", "invoice-attachment"].includes(mode) && !canManageFinance()) return;
+  if (["invoice", "cost", "invoice-rule", "invoice-attachment", "vehicle", "vehicle-insurance"].includes(mode) && !canManageFinance()) return;
   if (["invite", "manage-user", "liability", "liability-payment"].includes(mode) && !isOwner()) return;
   if (["change", "document", "schedule"].includes(mode) && !state.contractDetail?.id) return;
   state.modalMode = mode;
@@ -1439,6 +1526,28 @@ function formDefinition(mode, record) {
       field("Data opłacenia / zaksięgowania", input("paid_at", "date", record.paid_at)),
     ].join("")
   };
+  if (mode === "vehicle") return {
+    eyebrow: record.id ? "EDYCJA POJAZDU" : "NOWY POJAZD SŁUŻBOWY", title: record.id ? "Edytuj pojazd" : "Dodaj pojazd", fields: [
+      field("Marka i model", input("brand_model", "text", record.brand_model, "placeholder=\"np. Ford Transit Custom\" required"), "full"),
+      field("Numer rejestracyjny", input("registration_number", "text", record.registration_number, "placeholder=\"np. BI 12345\" required")),
+      field("Numer VIN (opcjonalnie)", input("vin", "text", record.vin, "placeholder=\"17 znaków\"")),
+      field("Termin ważności przeglądu", input("inspection_valid_to", "date", record.inspection_valid_to)),
+      field("Informacje dodatkowe (opcjonalnie)", `<textarea name="notes" placeholder="Np. właściciel pojazdu, przebieg, przeznaczenie…">${escapeHtml(record.notes || "")}</textarea>`, "full"),
+    ].join("")
+  };
+  if (mode === "vehicle-insurance") {
+    const vehicle = state.vehicles.find((row) => row.id === record.vehicle_id);
+    if (!vehicle) throw new Error("Nie znaleziono pojazdu dla tej polisy.");
+    return {
+      eyebrow: "POLISA UBEZPIECZENIOWA", title: "Dodaj ubezpieczenie", fields: [
+        field("Pojazd", `<input name="vehicle_id" type="hidden" value="${escapeHtml(vehicle.id)}" /><span class="readonly-field"><strong>${escapeHtml(vehicle.brand_model || "Pojazd służbowy")}</strong><br /><small>${escapeHtml(vehicle.registration_number)}</small></span>`, "full"),
+        field("Data obowiązywania od", input("valid_from", "date", "")),
+        field("Data obowiązywania do", input("valid_to", "date", "", "required")),
+        field("Opis / numer polisy (opcjonalnie)", input("label", "text", "", "placeholder=\"np. OC/AC 2026\""), "full"),
+        field("Plik polisy (PDF, JPG, PNG lub WEBP; maks. 15 MB)", `<input name="file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required />`, "full"),
+      ].join("")
+    };
+  }
   if (mode === "liability") return {
     eyebrow: record.id ? "EDYCJA ZOBOWIĄZANIA" : "ZOBOWIĄZANIE WŁAŚCICIELA", title: record.id ? "Edytuj zobowiązanie" : "Dodaj zobowiązanie", fields: [
       field("Nazwa zobowiązania", input("title", "text", record.title, "required"), "full"),
@@ -1520,6 +1629,7 @@ entryForm.addEventListener("submit", async (event) => {
     submit.textContent = "Zapisywanie…";
     if (mode === "document") await saveDocument(form);
     else if (mode === "invoice-attachment") await saveInvoiceAttachment(form);
+    else if (mode === "vehicle-insurance") await saveVehicleInsurance(form);
     else if (mode === "invite") await createUser(form);
     else if (mode === "manage-user") await updateUser(form, record);
     else {
@@ -1595,6 +1705,23 @@ invoiceAttachmentsContent?.addEventListener("click", async (event) => {
     if (action === "delete") await deleteInvoiceAttachment(id);
   } catch (error) {
     window.alert(error.message || "Nie udało się wykonać operacji na załączniku.");
+  }
+});
+document.querySelector("#vehicle-insurance-close")?.addEventListener("click", () => vehicleInsuranceModal?.close());
+vehicleInsuranceContent?.addEventListener("click", async (event) => {
+  const element = event.target.closest("[data-vehicle-insurance-action]");
+  if (!element) return;
+  try {
+    const action = element.dataset.vehicleInsuranceAction;
+    const id = element.dataset.id;
+    if (action === "upload") {
+      vehicleInsuranceModal?.close();
+      openEntryModal("vehicle-insurance", { vehicle_id: state.pendingVehicleInsuranceId });
+    }
+    if (action === "download") await downloadVehicleInsuranceDocument(id);
+    if (action === "delete") await deleteVehicleInsuranceDocument(id);
+  } catch (error) {
+    window.alert(error.message || "Nie udało się wykonać operacji na polisie.");
   }
 });
 document.querySelector("#invoice-preview-download").addEventListener("click", () => {
@@ -1895,6 +2022,12 @@ function formPayload(mode, form) {
     const paymentStatus = value("payment_status");
     return { table: "company_costs", payload: { cost_date: value("cost_date"), due_date: value("due_date") || null, paid_at: ["oplacona", "zaksiegowana"].includes(paymentStatus) ? (value("paid_at") || todayKey()) : null, category: value("category"), description: value("description"), vendor: value("vendor"), document_number: value("document_number"), net_amount_cents: number("net_amount"), vat_rate: vat(), payment_status: paymentStatus } };
   }
+  if (mode === "vehicle") {
+    const registrationNumber = value("registration_number").toUpperCase();
+    if (!value("brand_model")) throw new Error("Podaj markę i model pojazdu.");
+    if (!registrationNumber) throw new Error("Podaj numer rejestracyjny.");
+    return { table: "vehicles", payload: { brand_model: value("brand_model"), registration_number: registrationNumber, vin: value("vin").toUpperCase() || null, inspection_valid_to: value("inspection_valid_to") || null, notes: value("notes") } };
+  }
   if (mode === "liability") {
     const amountCents = number("amount");
     if (amountCents <= 0) throw new Error("Kwota zobowiązania musi być większa od zera.");
@@ -1959,6 +2092,8 @@ async function handleAction(element) {
       if (!liability) throw new Error("Nie znaleziono zobowiązania.");
       return openEntryModal("liability-payment", { liability_id: liability.id });
     }
+    if (action === "vehicle-insurance-documents") return openVehicleInsuranceModal(id);
+    if (action === "delete-vehicle") return await deleteVehicle(id);
     if (action === "allocate-invoice") return openInvoiceAllocationModal(id);
     if (action === "edit-budget-category") {
       if (!canManageContracts()) throw new Error("Brak uprawnień do edycji budżetu kontraktu.");
@@ -1981,6 +2116,7 @@ async function handleAction(element) {
       "edit-schedule": ["schedule", state.schedule],
       "edit-liability": ["liability", state.liabilities],
       "edit-liability-payment": ["liability-payment", state.liabilityPayments],
+      "edit-vehicle": ["vehicle", state.vehicles],
     }[action];
     if (editable) {
       const record = editable[1].find((row) => row.id === id);
@@ -2152,6 +2288,96 @@ async function deleteInvoiceAttachment(id) {
   if (error) throw error;
   state.invoiceAttachments = state.invoiceAttachments.filter((row) => row.id !== id);
   if (state.pendingInvoiceAttachmentId) openInvoiceAttachmentsModal(state.pendingInvoiceAttachmentId);
+}
+
+function openVehicleInsuranceModal(vehicleId) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do dokumentów ubezpieczenia.");
+  if (!vehicleInsuranceModal || !vehicleInsuranceContent) throw new Error("Nie można otworzyć dokumentów ubezpieczenia.");
+  const vehicle = state.vehicles.find((row) => row.id === vehicleId);
+  if (!vehicle) throw new Error("Nie znaleziono pojazdu.");
+  state.pendingVehicleInsuranceId = vehicleId;
+  const documents = vehicleInsuranceDocumentsFor(vehicleId);
+  vehicleInsuranceContent.innerHTML = `<div class="invoice-attachments-heading"><div><p class="eyebrow">POLISY UBEZPIECZENIOWE</p><h3>${escapeHtml(vehicle.brand_model || "Pojazd służbowy")}</h3><p>${escapeHtml(vehicle.registration_number)}</p></div><button class="button button-primary" type="button" data-vehicle-insurance-action="upload">+ Dodaj polisę</button></div><div class="vehicle-insurance-note"><strong>PRYWATNE PLIKI</strong><span>Dodaj polisę oraz okres jej obowiązywania. Załączniki są dostępne wyłącznie dla właściciela i księgowości.</span></div>${documents.length ? `<div class="invoice-attachment-list">${documents.map(vehicleInsuranceDocumentRow).join("")}</div>` : emptyState("Nie dodano jeszcze dokumentu ubezpieczenia.")}`;
+  if (!vehicleInsuranceModal.open) vehicleInsuranceModal.showModal();
+}
+
+function vehicleInsuranceDocumentRow(document) {
+  const period = document.valid_to ? `${document.valid_from ? `${date(document.valid_from)} – ` : ""}${date(document.valid_to)}` : "Brak daty zakończenia";
+  return `<article class="invoice-attachment-row"><div><strong>${escapeHtml(document.label || document.file_name)}</strong><small>${escapeHtml(document.file_name)} · ${fileSize(document.size_bytes)} · okres: ${escapeHtml(period)}</small></div><div class="row-actions"><button class="table-action" type="button" data-vehicle-insurance-action="download" data-id="${document.id}">Otwórz</button><button class="table-action danger" type="button" data-vehicle-insurance-action="delete" data-id="${document.id}">Usuń</button></div></article>`;
+}
+
+async function saveVehicleInsurance(form) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do dodawania polis.");
+  const vehicleId = String(form.get("vehicle_id") || "");
+  if (!state.vehicles.some((vehicle) => vehicle.id === vehicleId)) throw new Error("Nie wybrano prawidłowego pojazdu.");
+  const validTo = String(form.get("valid_to") || "");
+  if (!validTo) throw new Error("Podaj datę zakończenia ubezpieczenia.");
+  const validFrom = String(form.get("valid_from") || "");
+  if (validFrom && validTo < validFrom) throw new Error("Data zakończenia ubezpieczenia nie może być wcześniejsza niż data rozpoczęcia.");
+  return uploadVehicleInsuranceDocument(vehicleId, form.get("file"), String(form.get("label") || "").trim(), validFrom || null, validTo);
+}
+
+async function uploadVehicleInsuranceDocument(vehicleId, file, label = "", validFrom = null, validTo = null) {
+  if (!(file instanceof File) || !file.size) throw new Error("Wybierz plik polisy.");
+  if (file.size > 15728640) throw new Error("Plik jest większy niż dozwolone 15 MB.");
+  const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+  if (!allowedTypes.includes(file.type)) throw new Error("Dozwolone są wyłącznie pliki PDF, JPG, PNG i WEBP.");
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "polisa";
+  const unique = globalThis.crypto?.randomUUID?.() || String(Date.now());
+  const storagePath = `${vehicleId}/${unique}-${safeName}`;
+  const { error: uploadError } = await state.supabase.storage.from("vehicle-insurance").upload(storagePath, file, { contentType: file.type, upsert: false });
+  if (uploadError) throw uploadError;
+  const { error: recordError } = await state.supabase.from("vehicle_insurance_documents").insert({
+    vehicle_id: vehicleId,
+    file_name: file.name,
+    storage_path: storagePath,
+    mime_type: file.type,
+    size_bytes: file.size,
+    label,
+    valid_from: validFrom,
+    valid_to: validTo,
+    uploaded_by: state.user.id,
+  });
+  if (recordError) {
+    await state.supabase.storage.from("vehicle-insurance").remove([storagePath]);
+    throw recordError;
+  }
+}
+
+async function downloadVehicleInsuranceDocument(id) {
+  const document = state.vehicleInsuranceDocuments.find((row) => row.id === id);
+  if (!document) throw new Error("Nie znaleziono dokumentu ubezpieczenia.");
+  const { data, error } = await state.supabase.storage.from("vehicle-insurance").createSignedUrl(document.storage_path, 60);
+  if (error) throw error;
+  window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+}
+
+async function deleteVehicleInsuranceDocument(id) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do usuwania polis.");
+  const document = state.vehicleInsuranceDocuments.find((row) => row.id === id);
+  if (!document) throw new Error("Nie znaleziono dokumentu ubezpieczenia.");
+  if (!window.confirm(`Czy na pewno usunąć plik „${document.file_name}”?`)) return;
+  const { error: storageError } = await state.supabase.storage.from("vehicle-insurance").remove([document.storage_path]);
+  if (storageError) throw storageError;
+  const { error } = await state.supabase.from("vehicle_insurance_documents").delete().eq("id", id);
+  if (error) throw error;
+  state.vehicleInsuranceDocuments = state.vehicleInsuranceDocuments.filter((row) => row.id !== id);
+  if (state.pendingVehicleInsuranceId) openVehicleInsuranceModal(state.pendingVehicleInsuranceId);
+}
+
+async function deleteVehicle(id) {
+  if (!canManageFinance()) throw new Error("Brak uprawnień do usunięcia pojazdu.");
+  const vehicle = state.vehicles.find((row) => row.id === id);
+  if (!vehicle) throw new Error("Nie znaleziono pojazdu.");
+  if (!window.confirm(`Czy na pewno usunąć pojazd „${vehicle.brand_model}” (${vehicle.registration_number}) wraz z rejestrem polis? Tej operacji nie można cofnąć.`)) return;
+  const storagePaths = vehicleInsuranceDocumentsFor(id).map((document) => document.storage_path).filter(Boolean);
+  const { error } = await state.supabase.from("vehicles").delete().eq("id", id);
+  if (error) throw error;
+  if (storagePaths.length) {
+    const { error: storageError } = await state.supabase.storage.from("vehicle-insurance").remove(storagePaths);
+    if (storageError) console.warn("Nie udało się usunąć części plików polisy", storageError);
+  }
+  return await loadView(state.supabase);
 }
 
 async function markPaymentPaid(source, id) {
@@ -2817,6 +3043,12 @@ function createsScheduleCycle(recordId, predecessorId) {
 function dayNumber(value) { return Math.floor(Date.parse(`${value}T12:00:00Z`) / 86400000); }
 function dayToIso(day) { return new Date(day * 86400000).toISOString().slice(0, 10); }
 function addDays(isoDate, days) { const date = new Date(`${isoDate}T12:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); }
+function addMonths(isoDate, months) {
+  const [year, month, day] = String(isoDate || "").split("-").map(Number);
+  if (![year, month, day].every(Number.isFinite)) return "";
+  const lastDay = new Date(Date.UTC(year, month - 1 + months + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month - 1 + months, Math.min(day, lastDay))).toISOString().slice(0, 10);
+}
 function alertSeverityLabel(severity) { return ({ critical: "Krytyczny", warning: "Ostrzeżenie", info: "Informacja" })[severity] || "Informacja"; }
 
 function canManageContracts() { return ["owner", "manager"].includes(state.profile?.role); }

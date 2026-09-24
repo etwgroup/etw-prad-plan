@@ -400,6 +400,39 @@ textarea { min-height: 85px; resize: vertical; }
 .cashflow-direction.cashflow-in { background: #e3f2e8; }
 .cashflow-direction.cashflow-out { background: #fae4e2; }
 .overdue { color: #a13535 !important; font-weight: 800; }
+.vehicle-inspection-warning { margin: 0 0 20px; border: 1px solid #dc8c87; border-left: 6px solid #b13a3b; background: #fff7f6; }
+.vehicle-inspection-warning-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 24px; }
+.vehicle-inspection-warning-head .eyebrow { color: #9e2c2d; }
+.vehicle-inspection-warning-head h2 { margin: 6px 0 5px; color: #8d2426; font-size: 22px; letter-spacing: -.04em; }
+.vehicle-inspection-warning-head p:last-child { margin: 0; color: #7f5556; font-size: 13px; }
+.vehicle-inspection-warning-list { display: grid; border-top: 1px solid #e8b6b2; }
+.vehicle-inspection-warning-list article { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 24px; border-top: 1px solid #f0c9c5; }
+.vehicle-inspection-warning-list article:first-child { border-top: 0; }
+.vehicle-inspection-warning-list strong, .vehicle-inspection-warning-list span, .vehicle-inspection-warning-list small { display: block; }
+.vehicle-inspection-warning-list article > div:first-child strong { color: var(--ink); font-size: 14px; }
+.vehicle-inspection-warning-list article > div:first-child span { margin-top: 3px; color: #7f5556; font-size: 12px; font-weight: 700; }
+.vehicle-inspection-warning-list article > div:last-child { min-width: 120px; text-align: right; }
+.vehicle-inspection-warning-list article > div:last-child small { color: #9e2c2d; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.vehicle-inspection-warning-list article > div:last-child strong { margin-top: 3px; color: #8d2426; font-size: 14px; }
+.vehicles-panel { margin-bottom: 20px; }
+.vehicle-list { display: grid; gap: 16px; padding: 20px; }
+.vehicle-card { overflow: hidden; border: 1px solid var(--line); background: var(--white); }
+.vehicle-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 22px; border-top: 4px solid #7390d8; }
+.vehicle-card-title { min-width: 0; }
+.vehicle-card-title .eyebrow { margin: 0 0 7px; }
+.vehicle-card-title h3 { margin: 0; color: var(--ink); font-size: 20px; letter-spacing: -.035em; overflow-wrap: anywhere; }
+.vehicle-card-title p { margin: 6px 0 0; color: var(--ink-soft); font-size: 13px; overflow-wrap: anywhere; }
+.vehicle-card-title p strong { color: var(--ink); }
+.vehicle-card-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.vehicle-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); background: #fafaf8; }
+.vehicle-status-grid > div { display: grid; align-content: start; gap: 7px; min-width: 0; padding: 16px 22px; border-left: 1px solid var(--line); }
+.vehicle-status-grid > div:first-child { border-left: 0; }
+.vehicle-status-grid span { color: var(--ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.vehicle-status-grid strong { color: var(--ink); font-size: 15px; overflow-wrap: anywhere; }
+.vehicle-status-grid .tag { justify-self: start; }
+.vehicle-notes { margin: 0; padding: 14px 22px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.vehicle-insurance-note { display: flex; gap: 12px; margin: 18px 0; padding: 14px 16px; border-left: 4px solid #7390d8; background: #edf1ff; color: #3e578c; font-size: 12px; line-height: 1.45; }
+.vehicle-insurance-note strong { flex: 0 0 auto; color: var(--ink); font-size: 11px; letter-spacing: .06em; }
 .obligations-panel { margin-bottom: 20px; }
 .liability-list { display: grid; gap: 16px; padding: 20px; }
 .liability-card { overflow: hidden; border: 1px solid var(--line); background: var(--white); }
@@ -488,6 +521,7 @@ html body #app .auth-screen {
   .liability-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .liability-summary > div:nth-child(odd) { border-left: 0; }
   .liability-summary > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .vehicle-inspection-warning-head { align-items: flex-start; flex-direction: column; }
   .ksef-import-card { grid-template-columns: 1fr; }
   .ksef-import-intro { border-right: 0; border-bottom: 1px solid #eadb94; }
   .ksef-month-status { grid-template-columns: 1fr; }
@@ -555,6 +589,16 @@ html body #app .auth-screen {
   .liability-payment-disclosure summary { align-items: flex-start; padding: 14px 18px; }
   .liability-payment-disclosure summary > span:first-child { align-items: flex-start; flex-direction: column; gap: 3px; }
   .liability-payment-table th, .liability-payment-table td { padding-left: 18px; padding-right: 18px; }
+  .vehicle-inspection-warning-head { padding: 18px; }
+  .vehicle-inspection-warning-list article { align-items: flex-start; flex-direction: column; gap: 8px; padding: 14px 18px; }
+  .vehicle-inspection-warning-list article > div:last-child { min-width: 0; text-align: left; }
+  .vehicle-list { padding: 14px; }
+  .vehicle-card-header { display: grid; gap: 14px; padding: 18px; }
+  .vehicle-card-actions { justify-content: flex-start; }
+  .vehicle-status-grid { grid-template-columns: 1fr; }
+  .vehicle-status-grid > div { padding: 14px 18px; border-top: 1px solid var(--line); border-left: 0; }
+  .vehicle-status-grid > div:first-child { border-top: 0; }
+  .vehicle-notes { padding-left: 18px; padding-right: 18px; }
   .invoice-attachments-shell { padding: 20px; }
   .invoice-attachments-heading, .invoice-attachment-row { align-items: flex-start; flex-direction: column; }
   html body #app .auth-screen { position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; }

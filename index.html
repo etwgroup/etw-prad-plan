@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=20260924-0080" />
+    <link rel="stylesheet" href="./styles.css?v=20260924-0090" />
   </head>
   <body>
     <main id="app" class="app-shell" aria-live="polite">
@@ -67,6 +67,19 @@
       </section>
     </dialog>
 
+    <dialog id="vehicle-insurance-modal" class="modal invoice-attachments-modal">
+      <section class="invoice-attachments-shell" aria-label="Dokumenty ubezpieczenia pojazdu">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">POJAZDY SŁUŻBOWE</p>
+            <h2>Polisy ubezpieczeniowe</h2>
+          </div>
+          <button class="icon-button" id="vehicle-insurance-close" type="button" aria-label="Zamknij dokumenty ubezpieczenia">×</button>
+        </div>
+        <div id="vehicle-insurance-content"></div>
+      </section>
+    </dialog>
+
     <dialog id="invoice-delete-modal" class="modal">
       <form id="invoice-delete-form" method="dialog" novalidate>
         <div class="modal-heading">
@@ -113,6 +126,6 @@
     </div>
 
     <script src="./config.js"></script>
-    <script type="module" src="./app.js?v=20260924-0080"></script>
+    <script type="module" src="./app.js?v=20260924-0090"></script>
   </body>
 </html>
