@@ -38,6 +38,7 @@ const viewMeta = {
   invoices: { label: "Faktury", icon: "▧" },
   costs: { label: "Koszty firmowe", icon: "▱" },
   cashflow: { label: "Płatności i cash flow", icon: "↕" },
+  background: { label: "Działania w tle", icon: "↻" },
   alerts: { label: "Alerty i terminy", icon: "!" },
   reports: { label: "Raporty", icon: "▥" },
   users: { label: "Zespół i uprawnienia", icon: "◉" },
@@ -72,6 +73,7 @@ const state = {
   // Dane historyczne z DEMO pozostają w bazie i nadal można je przeglądać.
   ksefEnvironment: "production",
   history: [],
+  backgroundOperations: [],
   users: [],
   contractDetail: null,
   modalMode: null,
@@ -211,6 +213,7 @@ function renderShell(supabase) {
           ${navButton("invoices")}
           ${navButton("costs")}
           ${navButton("cashflow")}
+          ${navButton("background")}
         </nav>
         <p class="nav-label">ANALIZY</p>
         <nav class="nav" aria-label="Raporty">
@@ -286,7 +289,8 @@ function renderShell(supabase) {
 
 function navButton(view) {
   const meta = viewMeta[view];
-  return `<button type="button" class="nav-button ${view === state.activeView ? "is-active" : ""}" data-view="${view}"><span class="nav-icon">${meta.icon}</span>${meta.label}</button>`;
+  const runningCount = view === "background" ? activeBackgroundOperationCount() : 0;
+  return `<button type="button" class="nav-button ${view === state.activeView ? "is-active" : ""}" data-view="${view}"><span class="nav-icon">${meta.icon}</span><span>${meta.label}</span>${view === "background" ? `<strong id="background-operation-count" class="nav-operation-count" ${runningCount ? "" : "hidden"}>${runningCount}</strong>` : ""}</button>`;
 }
 
 async function loadView(supabase, { preserveScroll = false } = {}) {
@@ -322,6 +326,9 @@ async function loadView(supabase, { preserveScroll = false } = {}) {
     if (state.activeView === "cashflow") {
       await loadCashflowData(supabase);
       page.innerHTML = renderCashflow();
+    }
+    if (state.activeView === "background") {
+      page.innerHTML = renderBackgroundOperations();
     }
     if (state.activeView === "alerts") {
       await loadAlertData(supabase);
@@ -710,6 +717,54 @@ function invoiceCompanyCostEntry(invoice, amountCents, category, allocationId = 
     vat_rate: invoice.vat_rate,
     payment_status: invoice.payment_status,
   };
+}
+
+function renderBackgroundOperations() {
+  const active = state.backgroundOperations.filter((operation) => ["running", "stopping"].includes(operation.status));
+  const completed = state.backgroundOperations.filter((operation) => !["running", "stopping"].includes(operation.status));
+  return `
+    ${heading("PRĄDPLAN / OBSŁUGA", "Działania w tle", "Kontroluj importy KSeF, pobieranie list dokumentów i wizualizacji faktur uruchomione w tym oknie przeglądarki.")}
+    <div class="notice background-operations-notice"><strong>Jak działa zatrzymanie?</strong><br />Przycisk zatrzymuje oczekiwanie aplikacji na odpowiedź KSeF/Vercel. Jeżeli serwer rozpoczął już pracę, może ją dokończyć — import jest bezpieczny, bo ponowne uruchomienie pomija duplikaty po numerze KSeF.</div>
+    <section class="panel background-operation-panel">
+      <div class="panel-head"><div><h2>Aktywne działania</h2><p>${active.length ? `${active.length} ${active.length === 1 ? "działanie trwa" : "działania trwają"}. Możesz je zatrzymać bez odświeżania strony.` : "Brak aktywnych działań."}</p></div><span class="tag ${active.length ? "tag-yellow" : "tag-green"}">${active.length ? "W toku" : "Gotowe"}</span></div>
+      ${active.length ? `<div class="background-operation-list">${active.map(backgroundOperationRow).join("")}</div>` : emptyState("Nie ma obecnie importów ani pobierań wymagających Twojej uwagi.")}
+    </section>
+    <section class="panel background-operation-panel">
+      <div class="panel-head"><div><h2>Ostatnie działania</h2><p>Historia jest przechowywana do zamknięcia lub odświeżenia tej karty.</p></div>${completed.length ? `<button class="button button-secondary" type="button" data-action="clear-finished-background-operations">Wyczyść historię</button>` : ""}</div>
+      ${completed.length ? `<div class="background-operation-list">${completed.map(backgroundOperationRow).join("")}</div>` : emptyState("Nie zakończono jeszcze żadnego działania w tej sesji.")}
+    </section>`;
+}
+
+function backgroundOperationRow(operation) {
+  const status = backgroundOperationStatusMeta(operation.status);
+  const isActive = ["running", "stopping"].includes(operation.status);
+  return `<article class="background-operation-row ${isActive ? "is-active" : ""}">
+    <div class="background-operation-icon" aria-hidden="true">${isActive ? "↻" : status.icon}</div>
+    <div class="background-operation-copy"><div class="background-operation-title"><strong>${escapeHtml(operation.title)}</strong><span class="tag ${status.className}">${status.label}</span></div><p>${escapeHtml(operation.message)}</p><small>Rozpoczęto: ${escapeHtml(backgroundOperationTime(operation.startedAt))}${operation.finishedAt ? ` · Czas: ${escapeHtml(backgroundOperationDuration(operation.startedAt, operation.finishedAt))}` : ""}</small></div>
+    ${isActive ? `<button class="button button-secondary button-danger background-operation-stop" type="button" data-action="stop-background-operation" data-id="${escapeHtml(operation.id)}">Zatrzymaj</button>` : ""}
+  </article>`;
+}
+
+function backgroundOperationStatusMeta(status) {
+  return ({
+    running: { label: "W toku", className: "tag-yellow", icon: "↻" },
+    stopping: { label: "Zatrzymywanie", className: "tag-yellow", icon: "↻" },
+    completed: { label: "Zakończone", className: "tag-green", icon: "✓" },
+    cancelled: { label: "Zatrzymane", className: "tag-blue", icon: "■" },
+    failed: { label: "Nieudane", className: "tag-red", icon: "!" },
+  })[status] || { label: "Nieznany stan", className: "tag-blue", icon: "?" };
+}
+
+function backgroundOperationTime(timestamp) {
+  if (!timestamp) return "—";
+  return new Intl.DateTimeFormat("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(timestamp));
+}
+
+function backgroundOperationDuration(startedAt, finishedAt = Date.now()) {
+  const totalSeconds = Math.max(0, Math.round((Number(finishedAt) - Number(startedAt)) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes ? `${minutes} min ${seconds} s` : `${seconds} s`;
 }
 
 function renderCashflow() {
@@ -1713,6 +1768,8 @@ async function handleAction(element) {
   const action = element.dataset.action;
   const id = element.dataset.id;
   try {
+    if (action === "stop-background-operation") return stopBackgroundOperation(id);
+    if (action === "clear-finished-background-operations") return clearFinishedBackgroundOperations();
     if (["invoice-month-previous", "invoice-month-next", "cost-month-previous", "cost-month-next", "cashflow-month-previous", "cashflow-month-next"].includes(action)) {
       const kind = action.split("-month-")[0];
       const stateKey = ({ invoice: "invoiceMonth", cost: "costMonth", cashflow: "cashflowMonth" })[kind];
@@ -1971,23 +2028,122 @@ async function deleteContract() {
   await loadView(state.supabase);
 }
 
+function backgroundOperationId() {
+  return globalThis.crypto?.randomUUID?.() || `operation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function activeBackgroundOperationCount() {
+  return state.backgroundOperations.filter((operation) => ["running", "stopping"].includes(operation.status)).length;
+}
+
+function startBackgroundOperation({ title, message }) {
+  const operation = {
+    id: backgroundOperationId(),
+    title: String(title || "Działanie w tle"),
+    message: String(message || title || "Trwa wykonywanie działania…"),
+    status: "running",
+    startedAt: Date.now(),
+    finishedAt: null,
+    controller: new AbortController(),
+  };
+  state.backgroundOperations = [operation, ...state.backgroundOperations].slice(0, 60);
+  refreshBackgroundOperations();
+  return operation;
+}
+
+function updateBackgroundOperation(operation, message) {
+  const target = state.backgroundOperations.find((row) => row.id === operation?.id);
+  if (!target || !["running", "stopping"].includes(target.status)) return;
+  target.message = String(message || target.message);
+  refreshBackgroundOperations();
+}
+
+function finishBackgroundOperation(operation, status = "completed", message = "") {
+  const target = state.backgroundOperations.find((row) => row.id === operation?.id);
+  if (!target) return;
+  target.status = target.controller?.signal?.aborted ? "cancelled" : status;
+  target.message = String(message || target.message);
+  target.finishedAt = Date.now();
+  refreshBackgroundOperations();
+}
+
+function stopBackgroundOperation(operationId) {
+  const operation = state.backgroundOperations.find((row) => row.id === operationId);
+  if (!operation || !["running", "stopping"].includes(operation.status)) return;
+  operation.status = "stopping";
+  operation.message = "Zatrzymywanie działania w przeglądarce…";
+  operation.controller.abort();
+  refreshBackgroundOperations();
+}
+
+function clearFinishedBackgroundOperations() {
+  state.backgroundOperations = state.backgroundOperations.filter((operation) => ["running", "stopping"].includes(operation.status));
+  refreshBackgroundOperations();
+}
+
+function operationWasStopped(operation, error) {
+  return Boolean(operation?.controller?.signal?.aborted || error?.name === "AbortError");
+}
+
+function abortBackgroundOperationError() {
+  return new DOMException("Działanie zostało zatrzymane.", "AbortError");
+}
+
+function throwIfOperationStopped(operation) {
+  if (operation?.controller?.signal?.aborted) throw abortBackgroundOperationError();
+}
+
+function refreshBackgroundOperations() {
+  const count = activeBackgroundOperationCount();
+  const countElement = document.querySelector("#background-operation-count");
+  if (countElement) {
+    countElement.textContent = String(count);
+    countElement.hidden = count === 0;
+  }
+  syncBackgroundOperationToast();
+  const page = document.querySelector("#page-content");
+  if (page && state.activeView === "background") page.innerHTML = renderBackgroundOperations();
+}
+
+function syncBackgroundOperationToast() {
+  const active = state.backgroundOperations.find((operation) => ["running", "stopping"].includes(operation.status));
+  setImportProgress(active?.message || "", Boolean(active));
+}
+
 async function requestKsefConnectionTest(environment = "demo") {
   if (!canManageFinance()) throw new Error("Brak uprawnień do testu KSeF.");
   if (environment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
-  const response = await fetch("/api/ksef-test", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify({ environment }),
+  const label = ksefEnvironmentLabel(environment);
+  const operation = startBackgroundOperation({
+    title: `Test połączenia ${label}`,
+    message: `Trwa test połączenia z ${label}…`,
   });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się uruchomić testu KSeF.");
-  window.alert(data?.message || "Zlecono sprawdzenie połączenia KSeF.");
-  await loadView(state.supabase);
+  try {
+    const response = await fetch("/api/ksef-test", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ environment }),
+      signal: operation.controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    throwIfOperationStopped(operation);
+    if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się uruchomić testu KSeF.");
+    finishBackgroundOperation(operation, "completed", "Test połączenia zakończony.");
+    window.alert(data?.message || "Zlecono sprawdzenie połączenia KSeF.");
+    if (state.activeView !== "background") await loadView(state.supabase);
+  } catch (error) {
+    if (operationWasStopped(operation, error)) {
+      finishBackgroundOperation(operation, "cancelled", "Test połączenia został zatrzymany.");
+      return;
+    }
+    finishBackgroundOperation(operation, "failed", `Test połączenia nie powiódł się: ${error.message || "nieznany błąd"}`);
+    throw error;
+  }
 }
 
 async function requestKsefPreview(month) {
@@ -1995,22 +2151,38 @@ async function requestKsefPreview(month) {
   if (state.ksefEnvironment === "production" && !isOwner()) throw new Error("KSeF PRODUKCJA jest dostępny wyłącznie dla właściciela.");
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
-  const response = await fetch("/api/ksef-preview", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify({ month, environment: state.ksefEnvironment }),
+  const operation = startBackgroundOperation({
+    title: `Pobieranie listy faktur ${ksefEnvironmentLabel()}`,
+    message: `Trwa pobieranie listy faktur z ${ksefEnvironmentLabel()}…`,
   });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się pobrać podglądu KSeF.");
-  state.ksefPreview = Array.isArray(data?.invoices) ? data.invoices : [];
-  state.ksefPreviewMonth = data?.month || month;
-  state.ksefPreviewLimited = Boolean(data?.limited);
-  state.ksefSelectedNumbers.clear();
-  window.alert(data?.message || `Pobrano podgląd faktur z ${ksefEnvironmentLabel()}.`);
-  await loadView(state.supabase);
+  try {
+    const response = await fetch("/api/ksef-preview", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ month, environment: state.ksefEnvironment }),
+      signal: operation.controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    throwIfOperationStopped(operation);
+    if (!response.ok || data?.error) throw new Error(data?.error || "Nie udało się pobrać podglądu KSeF.");
+    state.ksefPreview = Array.isArray(data?.invoices) ? data.invoices : [];
+    state.ksefPreviewMonth = data?.month || month;
+    state.ksefPreviewLimited = Boolean(data?.limited);
+    state.ksefSelectedNumbers.clear();
+    finishBackgroundOperation(operation, "completed", `Pobrano listę ${state.ksefPreview.length} faktur.`);
+    window.alert(data?.message || `Pobrano podgląd faktur z ${ksefEnvironmentLabel()}.`);
+    if (state.activeView !== "background") await loadView(state.supabase);
+  } catch (error) {
+    if (operationWasStopped(operation, error)) {
+      finishBackgroundOperation(operation, "cancelled", "Pobieranie listy faktur zostało zatrzymane.");
+      return;
+    }
+    finishBackgroundOperation(operation, "failed", `Nie udało się pobrać listy faktur: ${error.message || "nieznany błąd"}`);
+    throw error;
+  }
 }
 
 function selectAllKsefPreview() {
@@ -2036,24 +2208,36 @@ async function importSelectedKsefPreview() {
   if (!window.confirm(`Zaimportować ${ksefNumbers.length} zaznaczonych faktur z ${ksefEnvironmentLabel()} do rejestru PrądPlan? Zostaną dodane jako nieprzypisane.`)) return;
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
-  setImportProgress(`Importowanie ${ksefNumbers.length} zaznaczonych faktur z ${ksefEnvironmentLabel()}…`, true);
+  const operation = startBackgroundOperation({
+    title: `Import ${ksefNumbers.length} wybranych FV`,
+    message: `Importowanie ${ksefNumbers.length} zaznaczonych faktur z ${ksefEnvironmentLabel()}…`,
+  });
   try {
-    const data = await requestKsefImport(session.access_token, { month, ksefNumbers, environment: state.ksefEnvironment });
+    const data = await requestKsefImport(session.access_token, { month, ksefNumbers, environment: state.ksefEnvironment }, operation.controller.signal);
+    throwIfOperationStopped(operation);
     const details = await synchronizeKsefImportDetails(session.access_token, {
       month,
       invoiceType: "all",
       environment: state.ksefEnvironment,
       ksefNumbers: data?.pendingKsefNumbers,
+      operation,
     });
+    throwIfOperationStopped(operation);
     state.ksefSelectedNumbers.clear();
+    finishBackgroundOperation(operation, "completed", `Zaimportowano wybrane faktury; uzupełniono XML dla ${details.synchronized} z ${details.initial}.`);
     window.alert(importKsefCompletionMessage(data?.imported || 0, details, ksefNumbers.length, data));
-    await loadView(state.supabase);
-  } finally {
-    setImportProgress("", false);
+    if (state.activeView !== "background") await loadView(state.supabase);
+  } catch (error) {
+    if (operationWasStopped(operation, error)) {
+      finishBackgroundOperation(operation, "cancelled", "Import wybranych faktur został zatrzymany.");
+      return;
+    }
+    finishBackgroundOperation(operation, "failed", `Nie udało się zaimportować wybranych faktur: ${error.message || "nieznany błąd"}`);
+    throw error;
   }
 }
 
-async function requestKsefImport(accessToken, payload) {
+async function requestKsefImport(accessToken, payload, signal = undefined) {
   const response = await fetch("/api/ksef-import", {
     method: "POST",
     headers: {
@@ -2061,13 +2245,14 @@ async function requestKsefImport(accessToken, payload) {
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(payload),
+    signal,
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data?.error) throw new Error(data?.error || `Nie udało się zaimportować faktur z ${ksefEnvironmentLabel()}.`);
   return data;
 }
 
-async function synchronizeKsefImportDetails(accessToken, { month, invoiceType, environment, ksefNumbers }) {
+async function synchronizeKsefImportDetails(accessToken, { month, invoiceType, environment, ksefNumbers, operation = null }) {
   const initialNumbers = [...new Set((Array.isArray(ksefNumbers) ? ksefNumbers : [])
     .filter((number) => typeof number === "string" && number.trim()))];
   if (!initialNumbers.length) {
@@ -2082,9 +2267,10 @@ async function synchronizeKsefImportDetails(accessToken, { month, invoiceType, e
   let automaticallyAssigned = 0;
 
   while (queue.length) {
+    throwIfOperationStopped(operation);
     const batch = queue.splice(0, KSEF_XML_DETAILS_PER_REQUEST);
     const completed = resolved.size;
-    setImportProgress(`Uzupełnianie XML, pozycji i terminów płatności: ${completed + 1}–${Math.min(completed + batch.length, initialNumbers.length)} z ${initialNumbers.length}…`, true);
+    updateBackgroundOperation(operation, `Uzupełnianie XML, pozycji i terminów płatności: ${completed + 1}–${Math.min(completed + batch.length, initialNumbers.length)} z ${initialNumbers.length}…`);
     let data = null;
     try {
       data = await requestKsefImport(accessToken, {
@@ -2093,11 +2279,12 @@ async function synchronizeKsefImportDetails(accessToken, { month, invoiceType, e
         environment,
         syncDetails: true,
         ksefNumbers: batch.map((item) => item.ksefNumber),
-      });
+      }, operation?.controller?.signal);
       synchronized += Number(data?.detailsSynced || 0);
       dueDatesUpdated += Number(data?.dueDatesUpdated || 0);
       automaticallyAssigned += Number(data?.automaticallyAssigned || 0);
     } catch (error) {
+      if (operationWasStopped(operation, error)) throw error;
       console.warn("KSeF XML batch synchronization failed", error);
     }
 
@@ -2118,7 +2305,7 @@ async function synchronizeKsefImportDetails(accessToken, { month, invoiceType, e
         failedNumbers.add(item.ksefNumber);
       }
     }
-    if (queue.length) await ksefSyncPause(120);
+    if (queue.length) await ksefSyncPause(120, operation?.controller?.signal);
   }
 
   return {
@@ -2160,8 +2347,21 @@ function importKsefCompletionMessage(imported, details, fallbackCount = 0, impor
   return `${importedMessage}${detailsMessage}${dueDateMessage}${rulesMessage}${importStatusMessage}${retryMessage}`;
 }
 
-function ksefSyncPause(milliseconds) {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+function ksefSyncPause(milliseconds, signal = undefined) {
+  if (signal?.aborted) return Promise.reject(abortBackgroundOperationError());
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(done, milliseconds);
+    function done() {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }
+    function abort() {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      reject(abortBackgroundOperationError());
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 async function importKsefMonth(month, invoiceType = "all") {
@@ -2171,24 +2371,36 @@ async function importKsefMonth(month, invoiceType = "all") {
   if (!window.confirm(`Zaimportować ${typeLabel} z ${ksefEnvironmentLabel()} za ${monthLabel(month)}? Dokumenty już obecne w PrądPlan w tym środowisku zostaną pominięte.`)) return;
   const { data: { session } } = await state.supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesja wygasła. Zaloguj się ponownie.");
-
-  setImportProgress(`Trwa pobieranie i importowanie z ${ksefEnvironmentLabel()}: ${typeLabel}…`, true);
+  const operation = startBackgroundOperation({
+    title: `Import ${typeLabel} — ${monthLabel(month)}`,
+    message: `Trwa pobieranie i importowanie z ${ksefEnvironmentLabel()}: ${typeLabel}…`,
+  });
   try {
-    const data = await requestKsefImport(session.access_token, { month, invoiceType, environment: state.ksefEnvironment });
+    const data = await requestKsefImport(session.access_token, { month, invoiceType, environment: state.ksefEnvironment }, operation.controller.signal);
+    throwIfOperationStopped(operation);
     state.ksefSelectedNumbers.clear();
     if (["sales", "purchase"].includes(invoiceType)) state.invoiceTypeFilter = invoiceType;
     // Rejestr jest gotowy od razu, zanim zacznie się wolniejsze pobieranie XML.
-    await loadView(state.supabase);
+    updateBackgroundOperation(operation, `Zapisano ${Number(data?.imported || 0)} nowych faktur. Trwa uzupełnianie XML, pozycji i terminów…`);
+    if (state.activeView === "invoices") await loadView(state.supabase);
     const details = await synchronizeKsefImportDetails(session.access_token, {
       month,
       invoiceType,
       environment: state.ksefEnvironment,
       ksefNumbers: data?.pendingKsefNumbers,
+      operation,
     });
+    throwIfOperationStopped(operation);
+    finishBackgroundOperation(operation, "completed", `Import zakończony. XML uzupełniono dla ${details.synchronized} z ${details.initial} faktur.`);
     window.alert(importKsefCompletionMessage(data?.imported || 0, details, 0, data));
-    await loadView(state.supabase);
-  } finally {
-    setImportProgress("", false);
+    if (state.activeView === "invoices") await loadView(state.supabase);
+  } catch (error) {
+    if (operationWasStopped(operation, error)) {
+      finishBackgroundOperation(operation, "cancelled", "Import został zatrzymany. Zapisane już faktury pozostają w rejestrze.");
+      return;
+    }
+    finishBackgroundOperation(operation, "failed", `Import nie powiódł się: ${error.message || "nieznany błąd"}`);
+    throw error;
   }
 }
 
@@ -2205,7 +2417,10 @@ async function showKsefInvoicePreview(id) {
 
   invoicePreviewContent.innerHTML = `<div class="invoice-preview-loading">Pobieranie wizualizacji faktury z ${escapeHtml(label)}…</div>`;
   invoicePreviewModal.showModal();
-  setImportProgress(`Trwa pobieranie wizualizacji faktury z ${label}…`, true);
+  const operation = startBackgroundOperation({
+    title: `Wizualizacja FV ${savedInvoice.document_number || savedInvoice.ksef_number}`,
+    message: `Trwa pobieranie wizualizacji faktury z ${label}…`,
+  });
   try {
     const response = await fetch("/api/ksef-invoice", {
       method: "POST",
@@ -2214,16 +2429,23 @@ async function showKsefInvoicePreview(id) {
         Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({ invoiceId: id }),
+      signal: operation.controller.signal,
     });
     const data = await response.json().catch(() => ({}));
+    throwIfOperationStopped(operation);
     if (!response.ok || data?.error || !data?.invoice) {
       throw new Error(data?.error || `Nie udało się pobrać wizualizacji faktury z ${label}.`);
     }
     invoicePreviewContent.innerHTML = renderKsefInvoiceVisualization(data.invoice, data?.environment || environment);
+    finishBackgroundOperation(operation, "completed", "Wizualizacja faktury została pobrana.");
   } catch (error) {
+    if (operationWasStopped(operation, error)) {
+      finishBackgroundOperation(operation, "cancelled", "Pobieranie wizualizacji faktury zostało zatrzymane.");
+      invoicePreviewContent.innerHTML = `<div class="notice"><strong>Pobieranie zostało zatrzymane.</strong><br />Możesz zamknąć to okno lub ponowić podgląd faktury, gdy KSeF będzie ponownie dostępny.</div>`;
+      return;
+    }
+    finishBackgroundOperation(operation, "failed", `Nie udało się pobrać wizualizacji: ${error.message || "nieznany błąd"}`);
     invoicePreviewContent.innerHTML = `<div class="notice">${escapeHtml(error.message || "Nie udało się pobrać wizualizacji faktury.")}</div>`;
-  } finally {
-    setImportProgress("", false);
   }
 }
 
