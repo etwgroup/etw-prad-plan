@@ -825,8 +825,10 @@ function renderAlerts() {
 
 function renderContractDetail() {
   const contract = state.contractDetail;
-  const invoiceRevenue = sum(state.invoices.filter((row) => row.invoice_type === "sales"), "net_amount_cents");
-  const invoiceCosts = sum(state.invoices.filter((row) => row.invoice_type === "purchase"), "net_amount_cents");
+  const salesInvoices = state.invoices.filter((row) => row.invoice_type === "sales");
+  const purchaseInvoices = state.invoices.filter((row) => row.invoice_type === "purchase");
+  const invoiceRevenue = sum(salesInvoices, "net_amount_cents");
+  const invoiceCosts = sum(purchaseInvoices, "net_amount_cents");
   const revenue = invoiceRevenue;
   const actualCosts = invoiceCosts;
   const approvedChanges = sum(state.changes.filter((row) => row.status === "zaakceptowane"), "net_amount_cents");
@@ -852,14 +854,21 @@ function renderContractDetail() {
     ${renderContractBudget(contract, editable)}
     ${isOwner() ? `<section class="panel contract-history"><div class="panel-head"><div><h2>Historia kontraktu</h2><p>Audyt zmian metadanych kontraktu — dostępny wyłącznie dla właściciela.</p></div></div>${state.history.length ? `<div class="history-list">${state.history.map(historyRow).join("")}</div>` : emptyState("Brak zarejestrowanych zmian kontraktu.")}</section>` : ""}
     <section class="panel schedule-panel"><div class="panel-head"><div><h2>Harmonogram kontraktu</h2><p>${state.schedule.length ? `${scheduleDone} z ${state.schedule.length} zadań zakończonych${scheduleDelayed ? ` · ${scheduleDelayed} opóźnionych` : ""}` : "Zadania, terminy i odpowiedzialność za realizację."}</p></div>${editable ? button("+ Dodaj zadanie", "schedule") : ""}</div>${state.schedule.length ? `<div class="table-wrap"><table><thead><tr><th>Zadanie</th><th>Termin</th><th>Odpowiedzialny</th><th>Postęp</th><th>Status</th><th></th></tr></thead><tbody>${state.schedule.map(scheduleRow).join("")}</tbody></table></div>${renderGantt(state.schedule)}` : emptyState("Brak zadań w harmonogramie. Dodaj pierwszy etap realizacji.")}</section>
-    <section class="detail-grid">
-      <section class="panel"><div class="panel-head"><div><h2>Protokoły przerobowe</h2><p>Dokumentacja postępu robót — bez wpływu na podsumowania finansowe.</p></div></div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Protokół</th><th>Opis</th><th>Wartość informacyjna</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak protokołów przerobowych.")}</section>
-      <section class="panel"><div class="panel-head"><div><h2>Faktury kontraktu</h2><p>Zakupowe oraz sprzedażowe przypisane do tego kontraktu. Kaucja: ${percentLabel(retentionPercent)}.</p></div>${canManageFinance() ? button("+ Faktura", "invoice") : ""}</div>${state.invoices.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Typ</th><th>Netto</th><th>Kaucja</th><th>Status</th><th></th></tr></thead><tbody>${state.invoices.map(detailInvoiceRow).join("")}</tbody></table></div>` : emptyState("Brak przypisanych faktur.")}</section>
-    </section>
-    <section class="detail-grid">
+    <section class="contract-detail-stack">
+      <section class="panel"><div class="panel-head"><div><h2>Protokoły przerobowe</h2><p>Dokumentacja postępu robót — bez wpływu na podsumowania finansowe.</p></div>${editable ? button("+ Dodaj protokół", "settlement") : ""}</div>${state.settlements.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Protokół</th><th>Opis</th><th>Wartość informacyjna</th><th></th></tr></thead><tbody>${state.settlements.map(detailSettlementRow).join("")}</tbody></table></div>` : emptyState("Brak protokołów przerobowych.")}</section>
+      <section class="panel"><div class="panel-head"><div><h2>Faktury kontraktu</h2><p>Rozdzielone na faktury sprzedażowe i kosztowe. Kaucja dla sprzedaży: ${percentLabel(retentionPercent)}.</p></div>${canManageFinance() ? button("+ Faktura", "invoice") : ""}</div>${renderContractInvoiceDisclosure("FV sprzedażowe", salesInvoices, "sales", retentionPercent)}${renderContractInvoiceDisclosure("FV kosztowe", purchaseInvoices, "purchase", retentionPercent)}</section>
       <section class="panel"><div class="panel-head"><div><h2>Zmiany, roszczenia i ryzyka</h2><p>Rejestr decyzji wpływających na kontrakt.</p></div>${editable ? button("+ Dodaj pozycję", "change") : ""}</div>${state.changes.length ? `<div class="table-wrap"><table><thead><tr><th>Rodzaj</th><th>Pozycja</th><th>Wpływ netto</th><th>Termin</th><th>Status</th><th></th></tr></thead><tbody>${state.changes.map(changeRow).join("")}</tbody></table></div>` : emptyState("Brak zmian i roszczeń.")}</section>
       <section class="panel"><div class="panel-head"><div><h2>Dokumenty kontraktu</h2><p>Umowy, protokoły, kosztorysy oraz ustalenia.</p></div>${editable ? button("+ Dodaj dokument", "document") : ""}</div>${state.documents.length ? `<div class="document-list">${state.documents.map(documentRow).join("")}</div>` : emptyState("Brak dokumentów.")}</section>
     </section>`;
+}
+
+function renderContractInvoiceDisclosure(title, rows, type, retentionPercent) {
+  const total = sum(rows, "net_amount_cents");
+  const isSales = type === "sales";
+  const tagClass = isSales ? "tag-green" : "tag-red";
+  const description = isSales ? "Przychody przypisane do kontraktu" : "Koszty przypisane do kontraktu";
+  const countLabel = rows.length === 1 ? "1 faktura" : `${rows.length} faktur`;
+  return `<details class="contract-invoice-disclosure"><summary><span class="contract-invoice-disclosure-copy"><strong>${escapeHtml(title)}</strong><small>${description} · netto ${money(total)}</small></span><span class="contract-invoice-disclosure-meta"><span class="tag ${tagClass}">${countLabel}</span><span class="contract-disclosure-chevron" aria-hidden="true">⌄</span></span></summary><div class="contract-invoice-disclosure-body">${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Numer</th><th>Kontrahent</th><th>Netto</th>${isSales ? "<th>Kaucja</th>" : ""}<th>Status</th><th></th></tr></thead><tbody>${rows.map((row) => detailInvoiceRow(row, { showRetention: isSales, retentionPercent })).join("")}</tbody></table></div>` : emptyState(`Brak faktur ${isSales ? "sprzedażowych" : "kosztowych"} przypisanych do tego kontraktu.`)}</div></details>`;
 }
 
 function renderReports() {
@@ -1078,7 +1087,7 @@ function detailSettlementRow(row) {
   const controls = canManageContracts() ? `<button class="table-action" type="button" data-action="edit-settlement" data-id="${row.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-settlement" data-id="${row.id}">Usuń</button>` : "";
   return `<tr><td>${date(row.settlement_date)}</td><td>Protokół przerobowy</td><td>${escapeHtml(row.reference_number || row.budget_category || "—")}</td><td class="money">${money(row.net_amount_cents)}</td><td class="row-actions">${controls}</td></tr>`;
 }
-function detailInvoiceRow(row) {
+function detailInvoiceRow(row, { showRetention = false, retentionPercent = state.contractDetail?.retention_percent } = {}) {
   const preview = row.source === "ksef" && row.ksef_number && canManageFinance()
     ? `<button class="table-action" type="button" data-action="preview-ksef-invoice" data-id="${row.id}">Podgląd</button>`
     : "";
@@ -1088,8 +1097,8 @@ function detailInvoiceRow(row) {
     ? `<button class="table-action" type="button" data-action="invoice-attachments" data-id="${row.id}">Skan / OCR${attachments ? ` (${attachments})` : ""}</button>`
     : "";
   const controls = canManageFinance() ? `${preview}${attachmentControl}<button class="table-action" type="button" data-action="allocate-invoice" data-id="${row.id}">Rozlicz</button><button class="table-action" type="button" data-action="edit-invoice" data-id="${row.id}">Edytuj</button>${remove}` : "";
-  const retention = row.invoice_type === "sales" ? retentionAmount(row.net_amount_cents, state.contractDetail?.retention_percent) : 0;
-  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}${row.allocation_portion ? " · część FV" : ""}</small></td><td>${escapeHtml(row.counterparty)}</td><td>${row.invoice_type === "sales" ? "Sprzedażowa" : "Zakupowa"}</td><td class="money">${money(row.net_amount_cents)}</td><td class="money">${row.invoice_type === "sales" ? money(retention) : "—"}</td><td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
+  const retention = row.invoice_type === "sales" ? retentionAmount(row.net_amount_cents, retentionPercent) : 0;
+  return `<tr><td><strong>${escapeHtml(row.document_number)}</strong><small>${date(row.issue_date)}${row.allocation_portion ? " · część FV" : ""}</small></td><td>${escapeHtml(row.counterparty)}</td><td class="money">${money(row.net_amount_cents)}</td>${showRetention ? `<td class="money">${money(retention)}</td>` : ""}<td>${statusTag(row.payment_status)}</td><td class="row-actions">${controls}</td></tr>`;
 }
 function invoiceAttachmentCount(invoiceId) {
   return (state.invoiceAttachments || []).filter((row) => row.invoice_id === invoiceId).length;
