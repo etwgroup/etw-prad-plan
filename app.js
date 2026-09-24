@@ -1113,8 +1113,20 @@ function invoiceAllocationsFor(invoiceId) {
   return (state.invoiceAllocations || []).filter((row) => row.invoice_id === invoiceId);
 }
 
+function invoiceOriginalNetAmount(row) {
+  const original = Number(row?.original_net_amount_cents);
+  return Number.isFinite(original) ? original : Number(row?.net_amount_cents || 0);
+}
+
+function invoiceHasSingleFullAllocation(row) {
+  const allocations = invoiceAllocationsFor(row.id);
+  return allocations.length === 1 && sum(allocations, "net_amount_cents") === invoiceOriginalNetAmount(row);
+}
+
 function invoiceUsesSplit(row) {
-  return invoiceAllocationsFor(row.id).length > 0;
+  const allocations = invoiceAllocationsFor(row.id);
+  if (!allocations.length) return false;
+  return !invoiceHasSingleFullAllocation(row);
 }
 
 function invoiceAllocatedAmount(row) {
@@ -1167,15 +1179,16 @@ function invoicePortionsForContract(contractId, invoices, allocations) {
   const portions = [];
   for (const invoice of invoices || []) {
     const splits = allocationByInvoice.get(invoice.id) || [];
+    const originalNetAmount = Number(invoice.net_amount_cents || 0);
     if (splits.length) {
       for (const allocation of splits) {
         if (allocation.target_type !== "contract" || allocation.contract_id !== contractId) continue;
-        portions.push({ ...invoice, net_amount_cents: allocation.net_amount_cents, contract_budget_category: allocation.budget_category || invoice.contract_budget_category || "pozostale", allocation_portion: true, allocation_id: allocation.id });
+        portions.push({ ...invoice, original_net_amount_cents: originalNetAmount, net_amount_cents: allocation.net_amount_cents, contract_budget_category: allocation.budget_category || invoice.contract_budget_category || "pozostale", allocation_portion: true, allocation_id: allocation.id });
       }
       continue;
     }
     if (invoice.allocation === "contract" && invoice.contract_id === contractId) {
-      portions.push({ ...invoice, allocation_portion: false });
+      portions.push({ ...invoice, original_net_amount_cents: originalNetAmount, allocation_portion: false });
     }
   }
   return portions.sort((left, right) => String(right.issue_date || "").localeCompare(String(left.issue_date || "")));
@@ -1422,6 +1435,20 @@ entryForm.addEventListener("submit", async (event) => {
           : supabase.from(table).insert({ ...payload, created_by: state.user.id });
         const { error } = await query;
         if (error) throw error;
+        // Jedno przypisanie obejmujące 100% faktury nie jest podziałem. Gdy
+        // użytkownik zmienia kwotę takiej FV, aktualizujemy równolegle tę
+        // pojedynczą pozycję rozliczenia, aby zachować spójność kwot.
+        if (mode === "invoice" && record?.id && invoiceHasSingleFullAllocation(record)) {
+          const allocation = invoiceAllocationsFor(record.id)[0];
+          const updatedAmount = Number(payload.net_amount_cents || 0);
+          if (allocation && Number(allocation.net_amount_cents || 0) !== updatedAmount) {
+            const { error: allocationError } = await supabase
+              .from("invoice_allocations")
+              .update({ net_amount_cents: updatedAmount })
+              .eq("id", allocation.id);
+            if (allocationError) throw allocationError;
+          }
+        }
       }
     }
     modal.close();
