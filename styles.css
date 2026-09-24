@@ -400,6 +400,41 @@ textarea { min-height: 85px; resize: vertical; }
 .cashflow-direction.cashflow-in { background: #e3f2e8; }
 .cashflow-direction.cashflow-out { background: #fae4e2; }
 .overdue { color: #a13535 !important; font-weight: 800; }
+.obligations-panel { margin-bottom: 20px; }
+.liability-list { display: grid; gap: 16px; padding: 20px; }
+.liability-card { overflow: hidden; border: 1px solid var(--line); background: var(--white); }
+.liability-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 22px; border-top: 4px solid #d5d5d2; }
+.liability-open .liability-card-header { border-top-color: var(--yellow); }
+.liability-overdue .liability-card-header { border-top-color: #cb6863; }
+.liability-settled .liability-card-header { border-top-color: #55aa75; }
+.liability-overpaid .liability-card-header { border-top-color: #7390d8; }
+.liability-card-copy { min-width: 0; }
+.liability-card-copy .eyebrow { margin: 0 0 7px; }
+.liability-card-copy h3 { margin: 0; color: var(--ink); font-size: 20px; letter-spacing: -.035em; overflow-wrap: anywhere; }
+.liability-card-copy > p:last-child { margin: 6px 0 0; color: var(--ink-soft); font-size: 13px; overflow-wrap: anywhere; }
+.liability-card-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
+.liability-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fafaf8; }
+.liability-summary > div { min-width: 0; padding: 16px 22px; border-left: 1px solid var(--line); }
+.liability-summary > div:first-child { border-left: 0; }
+.liability-summary span { display: block; margin-bottom: 7px; color: var(--ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.liability-summary strong { display: block; color: var(--ink); font-size: 17px; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.liability-summary .liability-paid { color: #287247; }
+.liability-summary .liability-open, .liability-summary .liability-overdue { color: #a13535; }
+.liability-notes { margin: 0; padding: 14px 22px; border-bottom: 1px solid var(--line); color: var(--ink-soft); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.liability-payment-disclosure { border-top: 0; }
+.liability-payment-disclosure summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 22px; cursor: pointer; list-style: none; }
+.liability-payment-disclosure summary::-webkit-details-marker { display: none; }
+.liability-payment-disclosure summary::after { content: "⌄"; margin-left: 4px; color: var(--ink-soft); font-size: 17px; font-weight: 800; }
+.liability-payment-disclosure[open] summary::after { transform: rotate(180deg); }
+.liability-payment-disclosure summary > span:first-child { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
+.liability-payment-disclosure summary strong { color: var(--ink); font-size: 13px; }
+.liability-payment-disclosure summary small { overflow: hidden; color: var(--ink-soft); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.liability-payment-total { margin-left: auto; color: #287247; font-size: 13px; font-weight: 800; white-space: nowrap; }
+.liability-payment-table-wrap { overflow-x: auto; border-top: 1px solid var(--line); }
+.liability-payment-table { min-width: 620px; margin: 0; }
+.liability-payment-table th, .liability-payment-table td { padding-left: 22px; padding-right: 22px; }
+.liability-payment-table td.row-actions { text-align: right; white-space: nowrap; }
+.liability-no-payments { margin: 0; padding: 0 22px 18px; color: var(--ink-soft); font-size: 13px; }
 .budget-panel-total { display: grid; gap: 4px; text-align: right; }
 .budget-panel-total span { color: var(--ink-soft); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 .budget-panel-total strong { font-size: 17px; letter-spacing: -.03em; }
@@ -450,6 +485,9 @@ html body #app .auth-screen {
   .invoice-preview-party-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cashflow-overview { grid-template-columns: 1fr; }
   .cashflow-days { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .liability-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .liability-summary > div:nth-child(odd) { border-left: 0; }
+  .liability-summary > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
   .ksef-import-card { grid-template-columns: 1fr; }
   .ksef-import-intro { border-right: 0; border-bottom: 1px solid #eadb94; }
   .ksef-month-status { grid-template-columns: 1fr; }
@@ -507,6 +545,16 @@ html body #app .auth-screen {
   .invoice-preview-table-wrap { padding-left: 20px; padding-right: 20px; }
   .cashflow-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cashflow-day { min-height: 112px; padding: 13px; }
+  .liability-list { padding: 14px; }
+  .liability-card-header { display: grid; gap: 14px; padding: 18px; }
+  .liability-card-actions { justify-content: flex-start; }
+  .liability-summary { grid-template-columns: 1fr; }
+  .liability-summary > div { padding: 14px 18px; border-top: 1px solid var(--line); border-left: 0; }
+  .liability-summary > div:first-child { border-top: 0; }
+  .liability-notes { padding-left: 18px; padding-right: 18px; }
+  .liability-payment-disclosure summary { align-items: flex-start; padding: 14px 18px; }
+  .liability-payment-disclosure summary > span:first-child { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .liability-payment-table th, .liability-payment-table td { padding-left: 18px; padding-right: 18px; }
   .invoice-attachments-shell { padding: 20px; }
   .invoice-attachments-heading, .invoice-attachment-row { align-items: flex-start; flex-direction: column; }
   html body #app .auth-screen { position: static !important; display: block !important; width: auto !important; height: auto !important; overflow: visible !important; }

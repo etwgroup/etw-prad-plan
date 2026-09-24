@@ -39,6 +39,7 @@ const viewMeta = {
   costs: { label: "Koszty firmowe", icon: "▱" },
   cashflow: { label: "Płatności i cash flow", icon: "↕" },
   background: { label: "Działania w tle", icon: "↻" },
+  obligations: { label: "Zobowiązania", icon: "▣" },
   alerts: { label: "Alerty i terminy", icon: "!" },
   reports: { label: "Raporty", icon: "▥" },
   users: { label: "Zespół i uprawnienia", icon: "◉" },
@@ -74,6 +75,8 @@ const state = {
   ksefEnvironment: "production",
   history: [],
   backgroundOperations: [],
+  liabilities: [],
+  liabilityPayments: [],
   users: [],
   contractDetail: null,
   modalMode: null,
@@ -220,7 +223,7 @@ function renderShell(supabase) {
           ${navButton("alerts")}
           ${navButton("reports")}
         </nav>
-        ${isOwner() ? `<p class="nav-label">ADMINISTRACJA</p><nav class="nav" aria-label="Administracja">${navButton("users")}</nav>` : ""}
+        ${isOwner() ? `<p class="nav-label">ADMINISTRACJA</p><nav class="nav" aria-label="Administracja">${navButton("obligations")}${navButton("users")}</nav>` : ""}
         <div class="sidebar-footer">
           <p class="connection-status"><i></i>Bezpieczne połączenie</p>
           <button class="sidebar-account" id="logout-button" type="button" title="Wyloguj się">
@@ -330,6 +333,11 @@ async function loadView(supabase, { preserveScroll = false } = {}) {
     if (state.activeView === "background") {
       page.innerHTML = renderBackgroundOperations();
     }
+    if (state.activeView === "obligations") {
+      if (!isOwner()) throw new Error("Brak uprawnień do zobowiązań właściciela.");
+      await loadObligationsData(supabase);
+      page.innerHTML = renderObligations();
+    }
     if (state.activeView === "alerts") {
       await loadAlertData(supabase);
       page.innerHTML = renderAlerts();
@@ -415,6 +423,15 @@ async function loadCostsData(supabase) {
   state.costs = costs;
   state.invoices = invoices;
   state.invoiceAllocations = invoiceAllocations;
+}
+
+async function loadObligationsData(supabase) {
+  const [liabilities, payments] = await Promise.all([
+    selectRows(supabase, "owner_liabilities", "id, title, creditor, amount_cents, due_date, notes, created_at, updated_at", "due_date", true),
+    selectRows(supabase, "owner_liability_payments", "id, liability_id, payment_date, amount_cents, notes, created_at, updated_at", "payment_date", false),
+  ]);
+  state.liabilities = liabilities;
+  state.liabilityPayments = payments;
 }
 
 async function loadContractDetailData(supabase) {
@@ -797,6 +814,79 @@ function renderCashflow() {
       <article class="panel cashflow-summary"><div class="panel-head"><div><h2>Stan miesiąca</h2><p>Aktualizuj status po rzeczywistym zaksięgowaniu przelewu.</p></div></div><div class="cashflow-summary-body"><div><span>Pozycje do wykonania</span><strong>${actionable.length}</strong></div><div><span>Opłacone / rozliczone</span><strong>${paidThisMonth.length}</strong></div><div><span>Przepływ netto</span><strong class="${plannedIn - plannedOut < 0 ? "negative" : "positive"}">${money(plannedIn - plannedOut)}</strong></div></div></article>
     </section>
     <section class="panel cashflow-list"><div class="panel-head"><div><h2>Plan płatności</h2><p>Oznacz przelew jako opłacony, aby nie pojawiał się w kolejnej prognozie.</p></div></div>${actionable.length ? `<div class="table-wrap"><table><thead><tr><th>Termin</th><th>Kierunek</th><th>Dokument / kontrahent</th><th>Źródło</th><th>Status</th><th>Brutto</th><th></th></tr></thead><tbody>${actionable.map(cashflowRow).join("")}</tbody></table></div>` : emptyState("Brak niezapłaconych pozycji w wybranym miesiącu.")}</section>`;
+}
+
+function renderObligations() {
+  const liabilities = state.liabilities || [];
+  const totalCents = sum(liabilities, "amount_cents");
+  const paidCents = sum(state.liabilityPayments || [], "amount_cents");
+  const outstandingCents = liabilities.reduce((total, liability) => total + Math.max(0, liabilityOutstandingCents(liability)), 0);
+  const overdueCount = liabilities.filter((liability) => liabilityStatusMeta(liability).key === "overdue").length;
+
+  return `
+    ${heading("ETW GROUP / WŁAŚCICIEL", "Zobowiązania", "Prywatny rejestr ręcznie dodanych zobowiązań właściciela oraz wpłat. Te dane są widoczne wyłącznie dla właściciela.", button("+ Dodaj zobowiązanie", "liability"))}
+    <section class="metric-grid">
+      ${metric("Wszystkie zobowiązania", money(totalCents), `${liabilities.length} ${liabilities.length === 1 ? "pozycja" : "pozycji"}`, "blue")}
+      ${metric("Wpłacono", money(paidCents), "Zarejestrowane wpłaty", "green")}
+      ${metric("Pozostało", money(outstandingCents), "Do zapłaty", outstandingCents ? "yellow" : "green")}
+      ${metric("Po terminie", String(overdueCount), overdueCount ? "Wymaga reakcji" : "Brak zaległości", overdueCount ? "red" : "green")}
+    </section>
+    <section class="panel obligations-panel">
+      <div class="panel-head"><div><h2>Lista zobowiązań</h2><p>Dodawaj wpłaty do właściwej pozycji. Pozostała kwota aktualizuje się automatycznie.</p></div></div>
+      ${liabilities.length ? `<div class="liability-list">${liabilities.map(liabilityCard).join("")}</div>` : emptyState("Nie dodano jeszcze żadnego zobowiązania.")}
+    </section>`;
+}
+
+function liabilityPaymentsFor(liabilityId) {
+  return (state.liabilityPayments || []).filter((payment) => payment.liability_id === liabilityId);
+}
+
+function liabilityPaidCents(liability) {
+  return sum(liabilityPaymentsFor(liability.id), "amount_cents");
+}
+
+function liabilityOutstandingCents(liability) {
+  return Number(liability?.amount_cents || 0) - liabilityPaidCents(liability);
+}
+
+function liabilityStatusMeta(liability) {
+  const balance = liabilityOutstandingCents(liability);
+  if (balance < 0) return { key: "overpaid", label: "Nadpłata", className: "tag-blue" };
+  if (balance === 0) return { key: "settled", label: "Spłacone", className: "tag-green" };
+  if (liability.due_date && liability.due_date < todayKey()) return { key: "overdue", label: "Po terminie", className: "tag-red" };
+  return { key: "open", label: "Do zapłaty", className: "tag-yellow" };
+}
+
+function liabilityCard(liability) {
+  const payments = liabilityPaymentsFor(liability.id);
+  const paidCents = liabilityPaidCents(liability);
+  const outstandingCents = liabilityOutstandingCents(liability);
+  const status = liabilityStatusMeta(liability);
+  const dueDate = liability.due_date ? date(liability.due_date) : "Bez terminu";
+  const remainingLabel = outstandingCents < 0 ? "Nadpłata" : "Pozostało";
+  const remainingCents = Math.abs(outstandingCents);
+
+  return `<article class="liability-card liability-${status.key}">
+    <header class="liability-card-header">
+      <div class="liability-card-copy"><p class="eyebrow">ZOBOWIĄZANIE WŁAŚCICIELA</p><h3>${escapeHtml(liability.title)}</h3><p>${escapeHtml(liability.creditor || "Brak wskazanego wierzyciela")}</p></div>
+      <div class="liability-card-actions"><span class="tag ${status.className}">${status.label}</span><button class="button button-secondary" type="button" data-action="add-liability-payment" data-id="${liability.id}">+ Wpłata</button><button class="table-action" type="button" data-action="edit-liability" data-id="${liability.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-liability" data-id="${liability.id}">Usuń</button></div>
+    </header>
+    <div class="liability-summary">
+      <div><span>Kwota zobowiązania</span><strong>${money(Number(liability.amount_cents || 0))}</strong></div>
+      <div><span>Wpłacono</span><strong class="liability-paid">${money(paidCents)}</strong></div>
+      <div><span>${remainingLabel}</span><strong class="${outstandingCents > 0 ? "liability-open" : ""}">${money(remainingCents)}</strong></div>
+      <div><span>Termin płatności</span><strong class="${status.key === "overdue" ? "liability-overdue" : ""}">${dueDate}</strong></div>
+    </div>
+    ${liability.notes ? `<p class="liability-notes">${escapeHtml(liability.notes)}</p>` : ""}
+    <details class="liability-payment-disclosure" ${payments.length ? "open" : ""}>
+      <summary><span><strong>Wpłaty</strong><small>${payments.length ? `${payments.length} ${payments.length === 1 ? "zarejestrowana wpłata" : "zarejestrowane wpłaty"}` : "Brak zarejestrowanych wpłat"}</small></span><span class="liability-payment-total">${money(paidCents)}</span></summary>
+      ${payments.length ? `<div class="liability-payment-table-wrap"><table class="liability-payment-table"><thead><tr><th>Data wpłaty</th><th>Kwota</th><th>Informacja</th><th></th></tr></thead><tbody>${payments.map(liabilityPaymentRow).join("")}</tbody></table></div>` : `<p class="liability-no-payments">Nie zarejestrowano jeszcze wpłat do tego zobowiązania.</p>`}
+    </details>
+  </article>`;
+}
+
+function liabilityPaymentRow(payment) {
+  return `<tr><td>${date(payment.payment_date)}</td><td class="money">${money(payment.amount_cents)}</td><td>${escapeHtml(payment.notes || "—")}</td><td class="row-actions"><button class="table-action" type="button" data-action="edit-liability-payment" data-id="${payment.id}">Edytuj</button><button class="table-action danger" type="button" data-action="delete-liability-payment" data-id="${payment.id}">Usuń</button></td></tr>`;
 }
 
 function renderCashflowCalendar(days) {
@@ -1243,7 +1333,7 @@ function userRow(row) {
 function openEntryModal(mode, record = null) {
   if (["contract", "settlement", "change", "document", "schedule", "budget-category"].includes(mode) && !canManageContracts()) return;
   if (["invoice", "cost", "invoice-rule", "invoice-attachment"].includes(mode) && !canManageFinance()) return;
-  if (["invite", "manage-user"].includes(mode) && !isOwner()) return;
+  if (["invite", "manage-user", "liability", "liability-payment"].includes(mode) && !isOwner()) return;
   if (["change", "document", "schedule"].includes(mode) && !state.contractDetail?.id) return;
   state.modalMode = mode;
   state.modalRecord = record;
@@ -1270,7 +1360,7 @@ function formDefinition(mode, record) {
   const input = (name, type, value = "", extra = "") => `<input name="${name}" type="${type}" ${val(value)} ${extra} />`;
   const select = (name, values, extra = "") => `<select name="${name}" ${extra}>${values}</select>`;
   const moneyValue = (cents) => Number(cents || 0) / 100;
-  const moneyInput = (name = "net_amount", value = "") => input(name, "number", value, "min=\"0\" step=\"0.01\" required");
+  const moneyInput = (name = "net_amount", value = "", extra = "min=\"0\" step=\"0.01\" required") => input(name, "number", value, extra);
   const statusOptions = (selected = "do_platnosci") => options([["nowa", "Nowa"], ["do_platnosci", "Do płatności"], ["oplacona", "Opłacona"], ["zaksiegowana", "Zaksięgowana"]], selected);
   const invoiceAllocationOptions = record.invoice_type === "sales"
     ? [["unassigned", "Do przypisania"], ["contract", "Kontrakt"]]
@@ -1349,6 +1439,27 @@ function formDefinition(mode, record) {
       field("Data opłacenia / zaksięgowania", input("paid_at", "date", record.paid_at)),
     ].join("")
   };
+  if (mode === "liability") return {
+    eyebrow: record.id ? "EDYCJA ZOBOWIĄZANIA" : "ZOBOWIĄZANIE WŁAŚCICIELA", title: record.id ? "Edytuj zobowiązanie" : "Dodaj zobowiązanie", fields: [
+      field("Nazwa zobowiązania", input("title", "text", record.title, "required"), "full"),
+      field("Wierzyciel / kontrahent", input("creditor", "text", record.creditor, "required")),
+      field("Kwota zobowiązania (zł)", moneyInput("amount", record.id ? moneyValue(record.amount_cents) : "", "min=\"0.01\" step=\"0.01\" required")),
+      field("Termin płatności", input("due_date", "date", record.due_date)),
+      field("Informacje dodatkowe (opcjonalnie)", `<textarea name="notes" placeholder="Np. numer umowy, rata, ustalenia z wierzycielem…">${escapeHtml(record.notes || "")}</textarea>`, "full"),
+    ].join("")
+  };
+  if (mode === "liability-payment") {
+    const liability = state.liabilities.find((row) => row.id === record.liability_id);
+    if (!liability) throw new Error("Nie znaleziono zobowiązania dla tej wpłaty.");
+    return {
+      eyebrow: record.id ? "EDYCJA WPŁATY" : "WPŁATA DO ZOBOWIĄZANIA", title: record.id ? "Edytuj wpłatę" : "Dodaj wpłatę", fields: [
+        field("Zobowiązanie", `<input name="liability_id" type="hidden" value="${escapeHtml(liability.id)}" /><span class="readonly-field"><strong>${escapeHtml(liability.title)}</strong><br /><small>${escapeHtml(liability.creditor || "Brak wskazanego wierzyciela")}</small></span>`, "full"),
+        field("Data wpłaty", input("payment_date", "date", record.payment_date || today, "required")),
+        field("Kwota wpłaty (zł)", moneyInput("amount", record.id ? moneyValue(record.amount_cents) : "", "min=\"0.01\" step=\"0.01\" required")),
+        field("Informacja / tytuł wpłaty (opcjonalnie)", `<textarea name="notes" placeholder="Np. przelew, rata 2/12, gotówka…">${escapeHtml(record.notes || "")}</textarea>`, "full"),
+      ].join("")
+    };
+  }
   if (mode === "change") return {
     eyebrow: record.id ? "EDYCJA DECYZJI" : "ZMIANA / ROSZCZENIE / RYZYKO", title: record.id ? "Edytuj pozycję" : "Dodaj pozycję", fields: [
       field("Rodzaj", select("kind", options([["zmiana", "Zmiana"], ["roszczenie", "Roszczenie"], ["ryzyko", "Ryzyko"]], record.kind || "zmiana"))),
@@ -1784,6 +1895,21 @@ function formPayload(mode, form) {
     const paymentStatus = value("payment_status");
     return { table: "company_costs", payload: { cost_date: value("cost_date"), due_date: value("due_date") || null, paid_at: ["oplacona", "zaksiegowana"].includes(paymentStatus) ? (value("paid_at") || todayKey()) : null, category: value("category"), description: value("description"), vendor: value("vendor"), document_number: value("document_number"), net_amount_cents: number("net_amount"), vat_rate: vat(), payment_status: paymentStatus } };
   }
+  if (mode === "liability") {
+    const amountCents = number("amount");
+    if (amountCents <= 0) throw new Error("Kwota zobowiązania musi być większa od zera.");
+    if (!value("title")) throw new Error("Podaj nazwę zobowiązania.");
+    if (!value("creditor")) throw new Error("Podaj wierzyciela lub kontrahenta.");
+    return { table: "owner_liabilities", payload: { title: value("title"), creditor: value("creditor"), amount_cents: amountCents, due_date: value("due_date") || null, notes: value("notes") } };
+  }
+  if (mode === "liability-payment") {
+    const amountCents = number("amount");
+    const liabilityId = value("liability_id");
+    if (!liabilityId || !state.liabilities.some((row) => row.id === liabilityId)) throw new Error("Nie wybrano prawidłowego zobowiązania.");
+    if (amountCents <= 0) throw new Error("Kwota wpłaty musi być większa od zera.");
+    if (!value("payment_date")) throw new Error("Podaj datę wpłaty.");
+    return { table: "owner_liability_payments", payload: { liability_id: liabilityId, payment_date: value("payment_date"), amount_cents: amountCents, notes: value("notes") } };
+  }
   if (mode === "budget-category") {
     if (!state.contractDetail?.id) throw new Error("Otwórz kartę kontraktu przed ustawieniem budżetu kategorii.");
     return { table: "contract_budget_categories", payload: { contract_id: state.contractDetail.id, category: normalizeContractBudgetCategory(value("category")), planned_cents: number("planned_amount"), notes: value("notes") } };
@@ -1827,6 +1953,12 @@ async function handleAction(element) {
       if (user) openEntryModal("manage-user", user);
       return;
     }
+    if (action === "add-liability-payment") {
+      if (!isOwner()) throw new Error("Wpłaty do zobowiązań może dodawać wyłącznie właściciel.");
+      const liability = state.liabilities.find((row) => row.id === id);
+      if (!liability) throw new Error("Nie znaleziono zobowiązania.");
+      return openEntryModal("liability-payment", { liability_id: liability.id });
+    }
     if (action === "allocate-invoice") return openInvoiceAllocationModal(id);
     if (action === "edit-budget-category") {
       if (!canManageContracts()) throw new Error("Brak uprawnień do edycji budżetu kontraktu.");
@@ -1847,6 +1979,8 @@ async function handleAction(element) {
       "edit-cost": ["cost", state.costs],
       "edit-change": ["change", state.changes],
       "edit-schedule": ["schedule", state.schedule],
+      "edit-liability": ["liability", state.liabilities],
+      "edit-liability-payment": ["liability-payment", state.liabilityPayments],
     }[action];
     if (editable) {
       const record = editable[1].find((row) => row.id === id);
@@ -1886,6 +2020,8 @@ async function handleAction(element) {
       "delete-change": ["contract_changes", "pozycję decyzji", canManageContracts()],
       "delete-schedule": ["contract_schedule_items", "zadanie harmonogramu", canManageContracts()],
       "delete-invoice-rule": ["invoice_assignment_rules", "regułę automatycznego przypisania", canManageFinance()],
+      "delete-liability": ["owner_liabilities", "zobowiązanie", isOwner()],
+      "delete-liability-payment": ["owner_liability_payments", "wpłatę", isOwner()],
     }[action];
     if (deletion) {
       if (!deletion[2]) throw new Error("Brak uprawnień do usunięcia pozycji.");
